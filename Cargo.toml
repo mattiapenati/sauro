@@ -1,0 +1,2 @@
+[workspace]
+members = ["examples", "sauro", "sauro-build", "sauro-macro"]

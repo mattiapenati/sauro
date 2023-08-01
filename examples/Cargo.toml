@@ -1,0 +1,11 @@
+[package]
+name = "sauro-examples"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+sauro = { path = "../sauro" }
+
+[build-dependencies]
+sauro-build = { path = "../sauro-build" }
