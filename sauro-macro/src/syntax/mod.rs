@@ -1,3 +1,4 @@
+mod parse;
 mod source;
 
-pub use self::source::RustModule;
+pub use self::{parse::Module, source::RustModule};
