@@ -202,7 +202,14 @@ fn parse_type(input: &syn::Type) -> Result<Type> {
             let segment = &path.segments[0];
             let ident = &segment.ident;
             if segment.arguments.is_none() {
-                return Ok(Type::Ident(ident.clone()));
+                let ty_name = ident.to_string();
+                let ty_name = ty_name.as_str();
+                let ty = match ty_name {
+                    "i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64" | "isize"
+                    | "usize" | "f32" | "f64" => Type::Native(ident.clone()),
+                    _ => Type::Json(ident.clone()),
+                };
+                return Ok(ty);
             }
         }
     }

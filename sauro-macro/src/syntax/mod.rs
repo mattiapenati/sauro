@@ -58,7 +58,10 @@ pub struct FnArg {
 }
 
 pub enum Type {
-    Ident(Ident),
+    /// Native types are passed as is
+    Native(Ident),
+    /// Struct and enum are passed using json serialization
+    Json(Ident),
 }
 
 pub enum ReturnType {
