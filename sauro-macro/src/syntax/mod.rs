@@ -62,9 +62,10 @@ pub enum Type {
     Native(TypePath),
     /// Struct and enum are passed using json serialization
     Json(TypePath),
-    String(TypePath),
-    Str(TypeReference),
-    Buffer(TypeReference),
+    OwnedString(TypePath),
+    BorrowedString(TypeReference),
+    OwnedBuffer(TypePath),
+    BorrowedBuffer(TypeReference),
 }
 
 pub enum ReturnType {

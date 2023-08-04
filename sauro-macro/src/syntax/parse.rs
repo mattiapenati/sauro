@@ -1,5 +1,8 @@
 use proc_macro2::Span;
-use syn::{punctuated::Punctuated, spanned::Spanned, Error, Pat, Result, Token, Visibility};
+use syn::{
+    punctuated::Punctuated, spanned::Spanned, Error, GenericArgument, Pat, PathArguments, Result,
+    Token, Visibility,
+};
 
 use super::{Field, FnArg, Function, Item, Module, ReturnType, Signature, Struct, Type};
 
@@ -198,28 +201,41 @@ fn parse_function_arg(input: &syn::FnArg) -> Result<FnArg> {
 fn parse_type(input: &syn::Type) -> Result<Type> {
     match &input {
         // handling native type
-        syn::Type::Path(input) => {
-            let path = &input.path;
-            if input.qself.is_none() && path.leading_colon.is_none() && path.segments.len() == 1 {
-                let segment = &path.segments[0];
+        syn::Type::Path(path_ty) => {
+            let path = &path_ty.path;
+            if path_ty.qself.is_none() && path.leading_colon.is_none() && path.segments.len() == 1 {
+                let segment = path.segments.first().unwrap();
                 let ident = &segment.ident;
                 if segment.arguments.is_none() {
                     let ty_name = ident.to_string();
-                    let ty_name = ty_name.as_str();
-                    let ty = match ty_name {
+                    match ty_name.as_str() {
                         "i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64" | "isize"
-                        | "usize" | "f32" | "f64" => Type::Native(input.clone()),
-                        "String" => Type::String(input.clone()),
-                        _ => Type::Json(input.clone()),
+                        | "usize" | "f32" | "f64" => return Ok(Type::Native(path_ty.clone())),
+                        "String" => return Ok(Type::OwnedString(path_ty.clone())),
+                        "Vec" => {
+                            if let PathArguments::AngleBracketed(args) = &segment.arguments {
+                                if let Some(GenericArgument::Type(syn::Type::Path(vec_path_ty))) =
+                                    args.args.first()
+                                {
+                                    if let Some(segment) = vec_path_ty.path.segments.first() {
+                                        let ident = &segment.ident;
+
+                                        if *ident == "u8" {
+                                            return Ok(Type::OwnedBuffer(path_ty.clone()));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        _ => return Ok(Type::Json(path_ty.clone())),
                     };
-                    return Ok(ty);
                 }
             }
         }
-        syn::Type::Reference(input) => {
+        syn::Type::Reference(reference_ty) => {
             // only reference without lifetime and mutability are supported
-            if input.lifetime.is_none() {
-                match &*input.elem {
+            if reference_ty.lifetime.is_none() {
+                match &*reference_ty.elem {
                     syn::Type::Path(ty) => {
                         let path = &ty.path;
                         if ty.qself.is_none()
@@ -231,7 +247,7 @@ fn parse_type(input: &syn::Type) -> Result<Type> {
                             if segment.arguments.is_none() {
                                 let ty_name = ident.to_string();
                                 if ty_name == "str" {
-                                    let ty = Type::Str(input.clone());
+                                    let ty = Type::BorrowedString(reference_ty.clone());
                                     return Ok(ty);
                                 }
                             }
@@ -249,7 +265,7 @@ fn parse_type(input: &syn::Type) -> Result<Type> {
                                 if segment.arguments.is_none() {
                                     let ty_name = ident.to_string();
                                     if ty_name == "u8" {
-                                        let ty = Type::Buffer(input.clone());
+                                        let ty = Type::BorrowedBuffer(reference_ty.clone());
                                         return Ok(ty);
                                     }
                                 }
@@ -271,7 +287,9 @@ fn parse_return_type(input: &syn::ReturnType) -> Result<ReturnType> {
         syn::ReturnType::Type(rarrow, ty) => {
             let ty = parse_type(ty)?;
             match &ty {
-                Type::Native(_) | Type::Json(_) | Type::String(_) => ReturnType::Type(*rarrow, ty),
+                Type::Native(_) | Type::Json(_) | Type::OwnedString(_) | Type::OwnedBuffer(_) => {
+                    ReturnType::Type(*rarrow, ty)
+                }
                 _ => return Err(Error::new_spanned(input, "unsupported return type")),
             }
         }

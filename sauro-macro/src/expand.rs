@@ -198,7 +198,7 @@ impl<'a> ToTokens for BindingFnArgOverride<'a> {
                     };
                 }
             }
-            Type::String(_) => {
+            Type::OwnedString(_) => {
                 quote_spanned! {span =>
                     let #ident = {
                         let buf = unsafe {
@@ -209,7 +209,7 @@ impl<'a> ToTokens for BindingFnArgOverride<'a> {
                     };
                 }
             }
-            Type::Str(_) => {
+            Type::BorrowedString(_) => {
                 quote_spanned! {span =>
                     let #ident = {
                         let buf = unsafe {
@@ -219,19 +219,28 @@ impl<'a> ToTokens for BindingFnArgOverride<'a> {
                     };
                 }
             }
-            Type::Buffer(ty) => {
-                if ty.mutability.is_some() {
-                    quote_spanned! {span =>
-                        let mut #ident = unsafe {
+            Type::OwnedBuffer(_) => {
+                quote_spanned! {span =>
+                    let mut #ident = {
+                        let buf = unsafe {
                             ::std::slice::from_raw_parts_mut(#ident_ptr, #ident_len)
                         };
-                    }
-                } else {
-                    quote_spanned! {span =>
-                        let #ident = unsafe {
-                            ::std::slice::from_raw_parts(#ident_ptr, #ident_len)
-                        };
-                    }
+                        buf.to_owned()
+                    };
+                }
+            }
+            Type::BorrowedBuffer(ty) if ty.mutability.is_some() => {
+                quote_spanned! {span =>
+                    let mut #ident = unsafe {
+                        ::std::slice::from_raw_parts_mut(#ident_ptr, #ident_len)
+                    };
+                }
+            }
+            Type::BorrowedBuffer(_) => {
+                quote_spanned! {span =>
+                    let #ident = unsafe {
+                        ::std::slice::from_raw_parts(#ident_ptr, #ident_len)
+                    };
                 }
             }
         };
@@ -244,9 +253,9 @@ impl ToTokens for Type {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         match self {
             Self::Native(ident) => ident.to_tokens(tokens),
-            Self::Json(ty) | Self::String(ty) => ty.to_tokens(tokens),
-            Self::Str(ty) => ty.to_tokens(tokens),
-            Self::Buffer(ty) => ty.to_tokens(tokens),
+            Self::Json(ty) | Self::OwnedString(ty) | Self::OwnedBuffer(ty) => ty.to_tokens(tokens),
+            Self::BorrowedString(ty) => ty.to_tokens(tokens),
+            Self::BorrowedBuffer(ty) => ty.to_tokens(tokens),
         }
     }
 }
@@ -298,12 +307,22 @@ impl<'a> ToTokens for BindingReturnStmt<'a> {
                         ::std::mem::forget(buffer);
                         ptr
                     })}),
-                    Type::String(_) => tokens.extend(quote!{(|x: #ty| {
+                    Type::OwnedString(_) => tokens.extend(quote!{(|x: #ty| {
                         let encoded_str = x.as_bytes();
                         let encoded_length = (encoded_str.len() as u32).to_be_bytes();
 
                         let mut buffer = encoded_length.to_vec();
                         buffer.extend(encoded_str);
+
+                        let ptr = buffer.as_ptr();
+                        ::std::mem::forget(buffer);
+                        ptr
+                    })}),
+                    Type::OwnedBuffer(_) => tokens.extend(quote!{(|x: #ty| {
+                        let encoded_length = (x.len() as u32).to_be_bytes();
+
+                        let mut buffer = encoded_length.to_vec();
+                        buffer.extend(x);
 
                         let ptr = buffer.as_ptr();
                         ::std::mem::forget(buffer);
