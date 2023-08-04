@@ -12,4 +12,8 @@ mod deno {
     pub fn add2(a: i32, b: i32) -> i32 {
         a + b
     }
+
+    pub fn concat(a: &str, b: &str) -> String {
+        format!("{}{}", a, b)
+    }
 }

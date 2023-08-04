@@ -62,6 +62,10 @@ pub enum Type {
     Native(Ident),
     /// Struct and enum are passed using json serialization
     Json(Ident),
+    /// String
+    String(Ident),
+    /// Str
+    Str { and_token: Token![&], ident: Ident },
 }
 
 pub enum ReturnType {

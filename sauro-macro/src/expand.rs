@@ -160,7 +160,7 @@ impl<'a> ToTokens for BindingFnArg<'a> {
                 let ident = format_ident!("arg{}", index);
                 tokens.extend(quote_spanned!(span => #ident #colon_token #ty))
             }
-            Type::Json(_) => {
+            Type::Json(_) | Type::String(_) | Type::Str { .. } => {
                 let ident_ptr = format_ident!("arg{}_ptr", index);
                 let ident_len = format_ident!("arg{}_len", index);
                 tokens.extend(quote_spanned! {span =>
@@ -198,6 +198,31 @@ impl<'a> ToTokens for BindingFnArgOverride<'a> {
                     };
                 });
             }
+            Type::String(_) => {
+                let ident_ptr = format_ident!("arg{}_ptr", index);
+                let ident_len = format_ident!("arg{}_len", index);
+                tokens.extend(quote_spanned! {span =>
+                    let #ident = {
+                        let buf = unsafe {
+                            ::std::slice::from_raw_parts(#ident_ptr, #ident_len)
+                        };
+                        let buf = buf.to_vec();
+                        ::std::string::String::from_utf8(buf).expect("failed to deserialize string")
+                    };
+                });
+            }
+            Type::Str { .. } => {
+                let ident_ptr = format_ident!("arg{}_ptr", index);
+                let ident_len = format_ident!("arg{}_len", index);
+                tokens.extend(quote_spanned! {span =>
+                    let #ident = {
+                        let buf = unsafe {
+                            ::std::slice::from_raw_parts(#ident_ptr, #ident_len)
+                        };
+                        ::std::str::from_utf8(buf).expect("failed to deserialize string")
+                    };
+                });
+            }
         }
     }
 }
@@ -205,7 +230,10 @@ impl<'a> ToTokens for BindingFnArgOverride<'a> {
 impl ToTokens for Type {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         match self {
-            Self::Native(ident) | Self::Json(ident) => ident.to_tokens(tokens),
+            Self::Native(ident) | Self::Json(ident) | Self::String(ident) => {
+                ident.to_tokens(tokens)
+            }
+            Self::Str { and_token, ident } => tokens.extend(quote!(#and_token #ident)),
         }
     }
 }
@@ -226,7 +254,9 @@ impl<'a> ToTokens for BindingReturnType<'a> {
         if let ReturnType::Type(rarrow, ty) = input {
             match ty {
                 Type::Native(ty) => tokens.extend(quote!(#rarrow #ty)),
-                Type::Json(_) => tokens.extend(quote!(#rarrow *const u8 )),
+                Type::Json(_) | Type::String(_) | Type::Str { .. } => {
+                    tokens.extend(quote!(#rarrow *const u8 ))
+                }
             }
         }
     }
@@ -242,22 +272,33 @@ impl<'a> ToTokens for BindingReturnStmt<'a> {
             ReturnType::Default => tokens.extend(quote!((|_| ()))),
             ReturnType::Type(_, ty) => {
                 match ty {
-                Type::Native(_) => tokens.extend(quote!((|x| x))),
-                // use length-prefixed buffer to return a struct
-                Type::Json(_) => tokens.extend(quote!{(|x| {
-                    let json = sauro::serde_json::to_string(&x).expect("failed to serialize binding result");
+                    Type::Native(_) => tokens.extend(quote!((|x: #ty| x))),
+                    // use length-prefixed buffer to return structs and strings
+                    Type::Json(_) => tokens.extend(quote!{(|x: #ty| {
+                        let json = sauro::serde_json::to_string(&x).expect("failed to serialize binding result");
 
-                    let encoded_json = json.into_bytes();
-                    let encoded_length = (json.len() as u32).to_be_bytes();
+                        let encoded_json = json.into_bytes();
+                        let encoded_length = (encoded_json.len() as u32).to_be_bytes();
 
-                    let mut buffer = encoded_length.to_vec();
-                    buffer.extend(encoded_json);
+                        let mut buffer = encoded_length.to_vec();
+                        buffer.extend(encoded_json);
 
-                    let ptr = buffer.as_ptr();
-                    ::std::mem::forget(buffer);
-                    ptr
-                })}),
-            }
+                        let ptr = buffer.as_ptr();
+                        ::std::mem::forget(buffer);
+                        ptr
+                    })}),
+                    Type::String(_) | Type::Str {..} => tokens.extend(quote!{(|x: #ty| {
+                        let encoded_str = x.as_bytes();
+                        let encoded_length = (encoded_str.len() as u32).to_be_bytes();
+
+                        let mut buffer = encoded_length.to_vec();
+                        buffer.extend(encoded_str);
+
+                        let ptr = buffer.as_ptr();
+                        ::std::mem::forget(buffer);
+                        ptr
+                    })})
+                }
             }
         }
     }

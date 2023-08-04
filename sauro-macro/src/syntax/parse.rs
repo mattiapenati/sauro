@@ -196,22 +196,53 @@ fn parse_function_arg(input: &syn::FnArg) -> Result<FnArg> {
 }
 
 fn parse_type(input: &syn::Type) -> Result<Type> {
-    if let syn::Type::Path(input) = &input {
-        let path = &input.path;
-        if input.qself.is_none() && path.leading_colon.is_none() && path.segments.len() == 1 {
-            let segment = &path.segments[0];
-            let ident = &segment.ident;
-            if segment.arguments.is_none() {
-                let ty_name = ident.to_string();
-                let ty_name = ty_name.as_str();
-                let ty = match ty_name {
-                    "i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64" | "isize"
-                    | "usize" | "f32" | "f64" => Type::Native(ident.clone()),
-                    _ => Type::Json(ident.clone()),
-                };
-                return Ok(ty);
+    match &input {
+        // handling native type
+        syn::Type::Path(input) => {
+            let path = &input.path;
+            if input.qself.is_none() && path.leading_colon.is_none() && path.segments.len() == 1 {
+                let segment = &path.segments[0];
+                let ident = segment.ident.clone();
+                if segment.arguments.is_none() {
+                    let ty_name = ident.to_string();
+                    let ty_name = ty_name.as_str();
+                    let ty = match ty_name {
+                        "i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64" | "isize"
+                        | "usize" | "f32" | "f64" => Type::Native(ident),
+                        "String" => Type::String(ident),
+                        _ => Type::Json(ident),
+                    };
+                    return Ok(ty);
+                }
             }
         }
+        syn::Type::Reference(input) => {
+            // only reference without lifetime and mutability are supported
+            if input.lifetime.is_none() && input.mutability.is_none() {
+                let and_token = input.and_token;
+                match &*input.elem {
+                    syn::Type::Path(input) => {
+                        let path = &input.path;
+                        if input.qself.is_none()
+                            && path.leading_colon.is_none()
+                            && path.segments.len() == 1
+                        {
+                            let segment = &path.segments[0];
+                            let ident = segment.ident.clone();
+                            if segment.arguments.is_none() {
+                                let ty_name = ident.to_string();
+                                if ty_name == "str" {
+                                    let ty = Type::Str { and_token, ident };
+                                    return Ok(ty);
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        _ => {}
     }
     Err(Error::new_spanned(input, "unsupported type"))
 }
