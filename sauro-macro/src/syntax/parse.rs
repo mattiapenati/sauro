@@ -209,8 +209,8 @@ fn parse_type(input: &syn::Type) -> Result<Type> {
                     let ty = match ty_name {
                         "i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64" | "isize"
                         | "usize" | "f32" | "f64" => Type::Native(ident),
-                        "String" => Type::String(ident),
-                        _ => Type::Json(ident),
+                        "String" => Type::String(input.clone()),
+                        _ => Type::Json(input.clone()),
                     };
                     return Ok(ty);
                 }
@@ -218,12 +218,12 @@ fn parse_type(input: &syn::Type) -> Result<Type> {
         }
         syn::Type::Reference(input) => {
             // only reference without lifetime and mutability are supported
-            if input.lifetime.is_none() && input.mutability.is_none() {
-                let and_token = input.and_token;
+            if input.lifetime.is_none() {
+                let mutability = input.mutability;
                 match &*input.elem {
-                    syn::Type::Path(input) => {
-                        let path = &input.path;
-                        if input.qself.is_none()
+                    syn::Type::Path(ty) => {
+                        let path = &ty.path;
+                        if ty.qself.is_none()
                             && path.leading_colon.is_none()
                             && path.segments.len() == 1
                         {
@@ -232,8 +232,31 @@ fn parse_type(input: &syn::Type) -> Result<Type> {
                             if segment.arguments.is_none() {
                                 let ty_name = ident.to_string();
                                 if ty_name == "str" {
-                                    let ty = Type::Str { and_token, ident };
+                                    let ty = Type::Str(input.clone());
                                     return Ok(ty);
+                                }
+                            }
+                        }
+                    }
+                    syn::Type::Slice(ty) => {
+                        if let syn::Type::Path(ty) = &*ty.elem {
+                            let path = &ty.path;
+                            if ty.qself.is_none()
+                                && path.leading_colon.is_none()
+                                && path.segments.len() == 1
+                            {
+                                let segment = &path.segments[0];
+                                let ident = segment.ident.clone();
+                                if segment.arguments.is_none() {
+                                    let ty_name = ident.to_string();
+                                    if ty_name == "u8" {
+                                        let ty = if mutability.is_some() {
+                                            Type::BufferMut(input.clone())
+                                        } else {
+                                            Type::Buffer(input.clone())
+                                        };
+                                        return Ok(ty);
+                                    }
                                 }
                             }
                         }

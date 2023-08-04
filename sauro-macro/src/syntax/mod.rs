@@ -1,6 +1,6 @@
 mod parse;
 
-use syn::{punctuated::Punctuated, token, Attribute, Block, Ident, Token};
+use syn::{punctuated::Punctuated, token, Attribute, Block, Ident, Token, TypePath, TypeReference};
 
 pub use self::parse::parse_module;
 
@@ -61,11 +61,11 @@ pub enum Type {
     /// Native types are passed as is
     Native(Ident),
     /// Struct and enum are passed using json serialization
-    Json(Ident),
-    /// String
-    String(Ident),
-    /// Str
-    Str { and_token: Token![&], ident: Ident },
+    Json(TypePath),
+    String(TypePath),
+    Str(TypeReference),
+    Buffer(TypeReference),
+    BufferMut(TypeReference),
 }
 
 pub enum ReturnType {
