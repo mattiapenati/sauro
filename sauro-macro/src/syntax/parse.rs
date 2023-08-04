@@ -202,13 +202,13 @@ fn parse_type(input: &syn::Type) -> Result<Type> {
             let path = &input.path;
             if input.qself.is_none() && path.leading_colon.is_none() && path.segments.len() == 1 {
                 let segment = &path.segments[0];
-                let ident = segment.ident.clone();
+                let ident = &segment.ident;
                 if segment.arguments.is_none() {
                     let ty_name = ident.to_string();
                     let ty_name = ty_name.as_str();
                     let ty = match ty_name {
                         "i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64" | "isize"
-                        | "usize" | "f32" | "f64" => Type::Native(ident),
+                        | "usize" | "f32" | "f64" => Type::Native(input.clone()),
                         "String" => Type::String(input.clone()),
                         _ => Type::Json(input.clone()),
                     };
@@ -219,7 +219,6 @@ fn parse_type(input: &syn::Type) -> Result<Type> {
         syn::Type::Reference(input) => {
             // only reference without lifetime and mutability are supported
             if input.lifetime.is_none() {
-                let mutability = input.mutability;
                 match &*input.elem {
                     syn::Type::Path(ty) => {
                         let path = &ty.path;
@@ -250,11 +249,7 @@ fn parse_type(input: &syn::Type) -> Result<Type> {
                                 if segment.arguments.is_none() {
                                     let ty_name = ident.to_string();
                                     if ty_name == "u8" {
-                                        let ty = if mutability.is_some() {
-                                            Type::BufferMut(input.clone())
-                                        } else {
-                                            Type::Buffer(input.clone())
-                                        };
+                                        let ty = Type::Buffer(input.clone());
                                         return Ok(ty);
                                     }
                                 }
@@ -273,7 +268,13 @@ fn parse_type(input: &syn::Type) -> Result<Type> {
 fn parse_return_type(input: &syn::ReturnType) -> Result<ReturnType> {
     let return_type = match input {
         syn::ReturnType::Default => ReturnType::Default,
-        syn::ReturnType::Type(rarrow, ty) => ReturnType::Type(*rarrow, parse_type(ty)?),
+        syn::ReturnType::Type(rarrow, ty) => {
+            let ty = parse_type(ty)?;
+            match &ty {
+                Type::Native(_) | Type::Json(_) | Type::String(_) => ReturnType::Type(*rarrow, ty),
+                _ => return Err(Error::new_spanned(input, "unsupported return type")),
+            }
+        }
     };
     Ok(return_type)
 }

@@ -219,18 +219,19 @@ impl<'a> ToTokens for BindingFnArgOverride<'a> {
                     };
                 }
             }
-            Type::Buffer(_) => {
-                quote_spanned! {span =>
-                    let #ident = unsafe {
-                        ::std::slice::from_raw_parts(#ident_ptr, #ident_len)
-                    };
-                }
-            }
-            Type::BufferMut(_) => {
-                quote_spanned! {span =>
-                    let mut #ident = unsafe {
-                        ::std::slice::from_raw_parts_mut(#ident_ptr, #ident_len)
-                    };
+            Type::Buffer(ty) => {
+                if ty.mutability.is_some() {
+                    quote_spanned! {span =>
+                        let mut #ident = unsafe {
+                            ::std::slice::from_raw_parts_mut(#ident_ptr, #ident_len)
+                        };
+                    }
+                } else {
+                    quote_spanned! {span =>
+                        let #ident = unsafe {
+                            ::std::slice::from_raw_parts(#ident_ptr, #ident_len)
+                        };
+                    }
                 }
             }
         };
@@ -245,7 +246,7 @@ impl ToTokens for Type {
             Self::Native(ident) => ident.to_tokens(tokens),
             Self::Json(ty) | Self::String(ty) => ty.to_tokens(tokens),
             Self::Str(ty) => ty.to_tokens(tokens),
-            Self::Buffer(ty) | Self::BufferMut(ty) => ty.to_tokens(tokens),
+            Self::Buffer(ty) => ty.to_tokens(tokens),
         }
     }
 }
