@@ -199,7 +199,7 @@ fn parse_function_arg(input: &syn::FnArg) -> Result<FnArg> {
 }
 
 fn parse_type(input: &syn::Type) -> Result<Type> {
-    match &input {
+    match input {
         // handling native type
         syn::Type::Path(path_ty) => {
             let path = &path_ty.path;
@@ -212,12 +212,29 @@ fn parse_type(input: &syn::Type) -> Result<Type> {
                         "i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64" | "isize"
                         | "usize" | "f32" | "f64" => return Ok(Type::Native(path_ty.clone())),
                         "String" => return Ok(Type::OwnedString(path_ty.clone())),
-                        "Vec" => {
+                        "Box" => {
                             if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                                if let Some(GenericArgument::Type(syn::Type::Path(vec_path_ty))) =
+                                if let Some(GenericArgument::Type(syn::Type::Slice(box_ty))) =
                                     args.args.first()
                                 {
-                                    if let Some(segment) = vec_path_ty.path.segments.first() {
+                                    if let syn::Type::Path(elem_ty) = &*box_ty.elem {
+                                        if let Some(segment) = elem_ty.path.segments.first() {
+                                            let ident = &segment.ident;
+
+                                            if *ident == "u8" {
+                                                return Ok(Type::OwnedBuffer(path_ty.clone()));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        "Vec" => {
+                            if let PathArguments::AngleBracketed(args) = &segment.arguments {
+                                if let Some(GenericArgument::Type(syn::Type::Path(vec_ty))) =
+                                    args.args.first()
+                                {
+                                    if let Some(segment) = vec_ty.path.segments.first() {
                                         let ident = &segment.ident;
 
                                         if *ident == "u8" {

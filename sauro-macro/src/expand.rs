@@ -219,13 +219,13 @@ impl<'a> ToTokens for BindingFnArgOverride<'a> {
                     };
                 }
             }
-            Type::OwnedBuffer(_) => {
+            Type::OwnedBuffer(ty) => {
                 quote_spanned! {span =>
-                    let mut #ident = {
+                    let mut #ident: #ty = {
                         let buf = unsafe {
                             ::std::slice::from_raw_parts_mut(#ident_ptr, #ident_len)
                         };
-                        buf.to_owned()
+                        buf.to_owned().into()
                     };
                 }
             }
