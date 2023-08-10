@@ -157,13 +157,13 @@ impl<'a> ToTokens for BindingFnArg<'a> {
 
         match &input.ty {
             Type::Native(ty) => {
-                let ident = format_ident!("arg{}", index);
+                let ident = format_ident!("__arg{}", index);
                 tokens.extend(quote_spanned!(span => #ident #colon_token #ty))
             }
             // everything else is passed as a pair (pointer, length)
             _ => {
-                let ident_ptr = format_ident!("arg{}_ptr", index);
-                let ident_len = format_ident!("arg{}_len", index);
+                let ident_ptr = format_ident!("__arg{}_ptr", index);
+                let ident_len = format_ident!("__arg{}_len", index);
                 tokens.extend(quote_spanned! {span =>
                     #ident_ptr #colon_token *mut u8,
                     #ident_len #colon_token usize
@@ -182,9 +182,9 @@ impl<'a> ToTokens for BindingFnArgOverride<'a> {
         let span = input.span();
         let ident = &input.ident;
 
-        let ident_arg = format_ident!("arg{}", index);
-        let ident_ptr = format_ident!("arg{}_ptr", index);
-        let ident_len = format_ident!("arg{}_len", index);
+        let ident_arg = format_ident!("__arg{}", index);
+        let ident_ptr = format_ident!("__arg{}_ptr", index);
+        let ident_len = format_ident!("__arg{}_len", index);
 
         let expand = match &input.ty {
             Type::Native(_) => quote_spanned!(span => let #ident = #ident_arg;),
