@@ -15,8 +15,8 @@ pub fn expand_module(
 
     for item in &module.items {
         let item_utilities = match item {
+            syntax::Item::Fn(func) => expand_function(&mut functions, func)?,
             syntax::Item::Struct(strct) => expand_struct(&mut structs, strct)?,
-            syntax::Item::Function(func) => expand_function(&mut functions, func)?,
         };
         utilities.merge(item_utilities);
     }
@@ -27,7 +27,7 @@ pub fn expand_module(
 
     // import external library
     let functions = module.items.iter().filter_map(|item| match item {
-        syntax::Item::Function(func) => Some(func),
+        syntax::Item::Fn(func) => Some(func),
         _ => None,
     });
     expand_symbols(&mut source, functions, dylib_name, dylib_prefix)?;
@@ -37,7 +37,7 @@ pub fn expand_module(
 
 fn expand_struct(
     out: &mut impl std::fmt::Write,
-    strct: &syntax::Struct,
+    strct: &syntax::ItemStruct,
 ) -> Result<Utilities, std::fmt::Error> {
     writeln!(out, "export type {} = {{", strct.ident)?;
     for field in &strct.fields {
@@ -53,7 +53,7 @@ fn expand_struct(
 
 fn expand_symbols<'a>(
     out: &mut impl std::fmt::Write,
-    funcs: impl Iterator<Item = &'a syntax::Function>,
+    funcs: impl Iterator<Item = &'a syntax::ItemFn>,
     dylib: &str,
     prefix: &str,
 ) -> std::fmt::Result {
@@ -109,7 +109,7 @@ fn expand_symbols<'a>(
 
 fn expand_function(
     out: &mut impl std::fmt::Write,
-    func: &syntax::Function,
+    func: &syntax::ItemFn,
 ) -> Result<Utilities, std::fmt::Error> {
     let sig = &func.sig;
     let has_inputs = !sig.inputs.is_empty();
@@ -141,23 +141,18 @@ fn expand_function(
     // transform input
     for (index, input) in sig.inputs.iter().enumerate() {
         match &input.ty {
-            syntax::Type::Native(_, _) => {
+            syntax::Type::Native(_) => {
                 writeln!(out, "  const __arg{} = {};", index, input.ident)?;
             }
-            syntax::Type::Json(_) => {
-                writeln!(
-                    out,
-                    "  const __arg{}_ptr = __structEncode({});",
-                    index, input.ident
-                )?;
+            syntax::Type::Buffer(_) => {
+                writeln!(out, "  const __arg{}_ptr = {};", index, input.ident)?;
                 writeln!(
                     out,
                     "  const __arg{0}_len = __arg{0}_ptr.byteLength;",
                     index
                 )?;
-                utilities.struct_encode = true;
             }
-            syntax::Type::BorrowedString(_) | syntax::Type::OwnedString(_) => {
+            syntax::Type::String(_) => {
                 writeln!(
                     out,
                     "  const __arg{}_ptr = __stringEncode({});",
@@ -170,13 +165,18 @@ fn expand_function(
                 )?;
                 utilities.string_encode = true;
             }
-            syntax::Type::BorrowedBuffer(_) | syntax::Type::OwnedBuffer(_) => {
-                writeln!(out, "  const __arg{}_ptr = {};", index, input.ident)?;
+            syntax::Type::Struct(_) => {
+                writeln!(
+                    out,
+                    "  const __arg{}_ptr = __structEncode({});",
+                    index, input.ident
+                )?;
                 writeln!(
                     out,
                     "  const __arg{0}_len = __arg{0}_ptr.byteLength;",
                     index
                 )?;
+                utilities.struct_encode = true;
             }
         }
     }
@@ -192,7 +192,7 @@ fn expand_function(
             write!(out, ", ")?;
         }
         match &input.ty {
-            syntax::Type::Native(_, _) => write!(out, "__arg{}", index)?,
+            syntax::Type::Native(_) => write!(out, "__arg{}", index)?,
             _ => write!(out, "__arg{0}_ptr, __arg{0}_len", index)?,
         }
     }
@@ -201,22 +201,18 @@ fn expand_function(
     // transform result
     if let syntax::ReturnType::Type(_, ty) = &sig.output {
         match &ty {
-            syntax::Type::Native(_, _) => {
+            syntax::Type::Native(_) => {
                 writeln!(out, "  return __res")?;
             }
-            syntax::Type::Json(_) => {
+            syntax::Type::Buffer(_) => {
                 if non_blocking {
-                    writeln!(
-                        out,
-                        "  return __res.then(__lenPrefixedBuffer).then(__structDecode);"
-                    )?;
+                    writeln!(out, "  return __res.then(__lenPrefixedBuffer);")?;
                 } else {
-                    writeln!(out, "  return __structDecode(__lenPrefixedBuffer(__res));")?;
+                    writeln!(out, "  return __lenPrefixedBuffer(__res);")?;
                 }
-                utilities.struct_decode = true;
                 utilities.len_prefixed_buffer = true;
             }
-            syntax::Type::BorrowedString(_) | syntax::Type::OwnedString(_) => {
+            syntax::Type::String(_) => {
                 if non_blocking {
                     writeln!(
                         out,
@@ -228,12 +224,16 @@ fn expand_function(
                 utilities.string_decode = true;
                 utilities.len_prefixed_buffer = true;
             }
-            syntax::Type::BorrowedBuffer(_) | syntax::Type::OwnedBuffer(_) => {
+            syntax::Type::Struct(_) => {
                 if non_blocking {
-                    writeln!(out, "  return __res.then(__lenPrefixedBuffer);")?;
+                    writeln!(
+                        out,
+                        "  return __res.then(__lenPrefixedBuffer).then(__structDecode);"
+                    )?;
                 } else {
-                    writeln!(out, "  return __lenPrefixedBuffer(__res);")?;
+                    writeln!(out, "  return __structDecode(__lenPrefixedBuffer(__res));")?;
                 }
+                utilities.struct_decode = true;
                 utilities.len_prefixed_buffer = true;
             }
         }
@@ -247,78 +247,68 @@ fn expand_function(
 
 fn expand_type(out: &mut impl std::fmt::Write, ty: &syntax::Type) -> std::fmt::Result {
     match ty {
-        syntax::Type::Native(kind, _) => match kind {
-            syntax::NativeKind::I8
-            | syntax::NativeKind::U8
-            | syntax::NativeKind::I16
-            | syntax::NativeKind::U16
-            | syntax::NativeKind::I32
-            | syntax::NativeKind::U32 => write!(out, "number"),
-            syntax::NativeKind::I64
-            | syntax::NativeKind::U64
-            | syntax::NativeKind::ISize
-            | syntax::NativeKind::USize
-            | syntax::NativeKind::F32
-            | syntax::NativeKind::F64 => write!(out, "number | bigint"),
+        syntax::Type::Native(ty) => match ty {
+            syntax::TypeNative::I8(_)
+            | syntax::TypeNative::I16(_)
+            | syntax::TypeNative::I32(_)
+            | syntax::TypeNative::U8(_)
+            | syntax::TypeNative::U16(_)
+            | syntax::TypeNative::U32(_) => write!(out, "number"),
+            syntax::TypeNative::I64(_)
+            | syntax::TypeNative::ISize(_)
+            | syntax::TypeNative::U64(_)
+            | syntax::TypeNative::USize(_)
+            | syntax::TypeNative::F32(_)
+            | syntax::TypeNative::F64(_) => write!(out, "number | bigint"),
         },
-        syntax::Type::Json(path) => {
+        syntax::Type::Buffer(_) => write!(out, "Uint8Array"),
+        syntax::Type::String(_) => write!(out, "string"),
+        syntax::Type::Struct(path) => {
             let ty = path.path.segments.first().unwrap();
             write!(out, "{}", ty.ident)
-        }
-        syntax::Type::OwnedString(_) | syntax::Type::BorrowedString(_) => {
-            write!(out, "string")
-        }
-        syntax::Type::OwnedBuffer(_) | syntax::Type::BorrowedBuffer(_) => {
-            write!(out, "Uint8Array")
         }
     }
 }
 
 fn symbol_type(ty: &syntax::Type) -> &'static str {
     match ty {
-        syntax::Type::Native(kind, _) => match kind {
-            syntax::NativeKind::I8 => "i8",
-            syntax::NativeKind::U8 => "u8",
-            syntax::NativeKind::I16 => "i16",
-            syntax::NativeKind::U16 => "u16",
-            syntax::NativeKind::I32 => "i32",
-            syntax::NativeKind::U32 => "u32",
-            syntax::NativeKind::I64 => "i64",
-            syntax::NativeKind::U64 => "u64",
-            syntax::NativeKind::ISize => "isize",
-            syntax::NativeKind::USize => "usize",
-            syntax::NativeKind::F32 => "f32",
-            syntax::NativeKind::F64 => "f64",
+        syntax::Type::Native(ty) => match ty {
+            syntax::TypeNative::I8(_) => "i8",
+            syntax::TypeNative::I16(_) => "i16",
+            syntax::TypeNative::I32(_) => "i32",
+            syntax::TypeNative::I64(_) => "i64",
+            syntax::TypeNative::ISize(_) => "isize",
+            syntax::TypeNative::U8(_) => "u8",
+            syntax::TypeNative::U16(_) => "u16",
+            syntax::TypeNative::U32(_) => "u32",
+            syntax::TypeNative::U64(_) => "u64",
+            syntax::TypeNative::USize(_) => "usize",
+            syntax::TypeNative::F32(_) => "f32",
+            syntax::TypeNative::F64(_) => "f64",
         },
-        syntax::Type::Json(_)
-        | syntax::Type::OwnedString(_)
-        | syntax::Type::BorrowedString(_)
-        | syntax::Type::OwnedBuffer(_)
-        | syntax::Type::BorrowedBuffer(_) => "buffer\", \"usize",
+        syntax::Type::Buffer(_) | syntax::Type::String(_) | syntax::Type::Struct(_) => {
+            "buffer\", \"usize"
+        }
     }
 }
 
 fn symbol_return_type(ty: &syntax::Type) -> &'static str {
     match ty {
-        syntax::Type::Native(kind, _) => match kind {
-            syntax::NativeKind::I8 => "i8",
-            syntax::NativeKind::U8 => "u8",
-            syntax::NativeKind::I16 => "i16",
-            syntax::NativeKind::U16 => "u16",
-            syntax::NativeKind::I32 => "i32",
-            syntax::NativeKind::U32 => "u32",
-            syntax::NativeKind::I64 => "i64",
-            syntax::NativeKind::U64 => "u64",
-            syntax::NativeKind::ISize => "isize",
-            syntax::NativeKind::USize => "usize",
-            syntax::NativeKind::F32 => "f32",
-            syntax::NativeKind::F64 => "f64",
+        syntax::Type::Native(ty) => match ty {
+            syntax::TypeNative::I8(_) => "i8",
+            syntax::TypeNative::I16(_) => "i16",
+            syntax::TypeNative::I32(_) => "i32",
+            syntax::TypeNative::I64(_) => "i64",
+            syntax::TypeNative::ISize(_) => "isize",
+            syntax::TypeNative::U8(_) => "u8",
+            syntax::TypeNative::U16(_) => "u16",
+            syntax::TypeNative::U32(_) => "u32",
+            syntax::TypeNative::U64(_) => "u64",
+            syntax::TypeNative::USize(_) => "usize",
+            syntax::TypeNative::F32(_) => "f32",
+            syntax::TypeNative::F64(_) => "f64",
         },
-        syntax::Type::Json(_)
-        | syntax::Type::OwnedString(_)
-        | syntax::Type::BorrowedString(_)
-        | syntax::Type::OwnedBuffer(_)
-        | syntax::Type::BorrowedBuffer(_) => "buffer",
+        syntax::Type::Buffer(_) | syntax::Type::String(_) | syntax::Type::Struct(_) => "buffer",
     }
 }
 
@@ -395,7 +385,7 @@ impl Utilities {
     }
 }
 
-fn is_non_blocking_fn(func: &syntax::Function) -> bool {
+fn is_non_blocking_fn(func: &syntax::ItemFn) -> bool {
     for attr in &func.attrs {
         if let syn::Meta::Path(path) = &attr.meta {
             let segments = &path.segments;

@@ -5,7 +5,8 @@ use syn::{
 };
 
 use super::{
-    Field, FnArg, Function, Item, Module, NativeKind, ReturnType, Signature, Struct, Type,
+    Field, FnArg, Item, ItemFn, ItemStruct, Module, ReturnType, Signature, Type, TypeBuffer,
+    TypeNative, TypeString,
 };
 
 pub fn parse_module(input: syn::ItemMod) -> Result<Module> {
@@ -33,12 +34,12 @@ pub fn parse_module(input: syn::ItemMod) -> Result<Module> {
 fn parse_item(input: syn::Item) -> Result<Item> {
     match input {
         syn::Item::Struct(input) => Ok(Item::Struct(parse_struct(input)?)),
-        syn::Item::Fn(input) => Ok(Item::Function(parse_function(input)?)),
+        syn::Item::Fn(input) => Ok(Item::Fn(parse_function(input)?)),
         input => Err(Error::new_spanned(input, "unsupported item")),
     }
 }
 
-fn parse_struct(input: syn::ItemStruct) -> Result<Struct> {
+fn parse_struct(input: syn::ItemStruct) -> Result<ItemStruct> {
     let params = &input.generics.params;
     if !params.is_empty() {
         return Err(Error::new_spanned(
@@ -75,7 +76,7 @@ fn parse_struct(input: syn::ItemStruct) -> Result<Struct> {
     let struct_token = input.struct_token;
     let ident = input.ident.clone();
 
-    Ok(Struct {
+    Ok(ItemStruct {
         attrs,
         vis,
         struct_token,
@@ -101,13 +102,13 @@ fn parse_field(input: syn::Field) -> Result<Field> {
     })
 }
 
-fn parse_function(input: syn::ItemFn) -> Result<Function> {
+fn parse_function(input: syn::ItemFn) -> Result<ItemFn> {
     let attrs = input.attrs;
     let vis = visibility_pub(&input.vis, input.sig.span());
     let sig = parse_signature(input.sig)?;
     let block = input.block;
 
-    Ok(Function {
+    Ok(ItemFn {
         attrs,
         vis,
         sig,
@@ -206,24 +207,25 @@ fn parse_type(input: &syn::Type) -> Result<Type> {
         syn::Type::Path(path_ty) => {
             let path = &path_ty.path;
             if path_ty.qself.is_none() && path.leading_colon.is_none() && path.segments.len() == 1 {
+                let path = path.clone();
                 let segment = path.segments.first().unwrap();
-                let ident = segment.ident.clone();
+                let ident = &segment.ident;
                 if segment.arguments.is_none() {
                     let ty_name = ident.to_string();
                     match ty_name.as_str() {
-                        "i8" => return Ok(Type::Native(NativeKind::I8, ident)),
-                        "u8" => return Ok(Type::Native(NativeKind::U8, ident)),
-                        "i16" => return Ok(Type::Native(NativeKind::I16, ident)),
-                        "u16" => return Ok(Type::Native(NativeKind::U16, ident)),
-                        "i32" => return Ok(Type::Native(NativeKind::I32, ident)),
-                        "u32" => return Ok(Type::Native(NativeKind::U32, ident)),
-                        "i64" => return Ok(Type::Native(NativeKind::I64, ident)),
-                        "u64" => return Ok(Type::Native(NativeKind::U64, ident)),
-                        "isize" => return Ok(Type::Native(NativeKind::ISize, ident)),
-                        "usize" => return Ok(Type::Native(NativeKind::USize, ident)),
-                        "f32" => return Ok(Type::Native(NativeKind::F32, ident)),
-                        "f64" => return Ok(Type::Native(NativeKind::F64, ident)),
-                        "String" => return Ok(Type::OwnedString(path_ty.clone())),
+                        "i8" => return Ok(Type::Native(TypeNative::I8(ident.clone()))),
+                        "i16" => return Ok(Type::Native(TypeNative::I16(ident.clone()))),
+                        "i32" => return Ok(Type::Native(TypeNative::I32(ident.clone()))),
+                        "i64" => return Ok(Type::Native(TypeNative::I64(ident.clone()))),
+                        "isize" => return Ok(Type::Native(TypeNative::ISize(ident.clone()))),
+                        "u8" => return Ok(Type::Native(TypeNative::U8(ident.clone()))),
+                        "u16" => return Ok(Type::Native(TypeNative::U16(ident.clone()))),
+                        "u32" => return Ok(Type::Native(TypeNative::U32(ident.clone()))),
+                        "u64" => return Ok(Type::Native(TypeNative::U64(ident.clone()))),
+                        "usize" => return Ok(Type::Native(TypeNative::USize(ident.clone()))),
+                        "f32" => return Ok(Type::Native(TypeNative::F32(ident.clone()))),
+                        "f64" => return Ok(Type::Native(TypeNative::F64(ident.clone()))),
+                        "String" => return Ok(Type::String(TypeString::Owned(path_ty.clone()))),
                         "Box" => {
                             if let PathArguments::AngleBracketed(args) = &segment.arguments {
                                 if let Some(GenericArgument::Type(syn::Type::Slice(box_ty))) =
@@ -234,7 +236,9 @@ fn parse_type(input: &syn::Type) -> Result<Type> {
                                             let ident = &segment.ident;
 
                                             if *ident == "u8" {
-                                                return Ok(Type::OwnedBuffer(path_ty.clone()));
+                                                return Ok(Type::Buffer(TypeBuffer::Owned(
+                                                    path_ty.clone(),
+                                                )));
                                             }
                                         }
                                     }
@@ -250,13 +254,15 @@ fn parse_type(input: &syn::Type) -> Result<Type> {
                                         let ident = &segment.ident;
 
                                         if *ident == "u8" {
-                                            return Ok(Type::OwnedBuffer(path_ty.clone()));
+                                            return Ok(Type::Buffer(TypeBuffer::Owned(
+                                                path_ty.clone(),
+                                            )));
                                         }
                                     }
                                 }
                             }
                         }
-                        _ => return Ok(Type::Json(path_ty.clone())),
+                        _ => return Ok(Type::Struct(path_ty.clone())),
                     };
                 }
             }
@@ -276,8 +282,9 @@ fn parse_type(input: &syn::Type) -> Result<Type> {
                             if segment.arguments.is_none() {
                                 let ty_name = ident.to_string();
                                 if ty_name == "str" {
-                                    let ty = Type::BorrowedString(reference_ty.clone());
-                                    return Ok(ty);
+                                    return Ok(Type::String(TypeString::Borrowed(
+                                        reference_ty.clone(),
+                                    )));
                                 }
                             }
                         }
@@ -294,7 +301,9 @@ fn parse_type(input: &syn::Type) -> Result<Type> {
                                 if segment.arguments.is_none() {
                                     let ty_name = ident.to_string();
                                     if ty_name == "u8" {
-                                        let ty = Type::BorrowedBuffer(reference_ty.clone());
+                                        let ty = Type::Buffer(TypeBuffer::Borrowed(
+                                            reference_ty.clone(),
+                                        ));
                                         return Ok(ty);
                                     }
                                 }
@@ -316,10 +325,10 @@ fn parse_return_type(input: &syn::ReturnType) -> Result<ReturnType> {
         syn::ReturnType::Type(rarrow, ty) => {
             let ty = parse_type(ty)?;
             match &ty {
-                Type::Native(_, _)
-                | Type::Json(_)
-                | Type::OwnedString(_)
-                | Type::OwnedBuffer(_) => ReturnType::Type(*rarrow, ty),
+                Type::Native(_)
+                | Type::Struct(_)
+                | Type::String(TypeString::Owned(_))
+                | Type::Buffer(TypeBuffer::Owned(_)) => ReturnType::Type(*rarrow, ty),
                 _ => return Err(Error::new_spanned(input, "unsupported return type")),
             }
         }

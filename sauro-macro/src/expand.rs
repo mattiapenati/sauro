@@ -2,7 +2,10 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote, quote_spanned, ToTokens};
 use syn::spanned::Spanned;
 
-use crate::syntax::{Field, FnArg, Function, Item, Module, ReturnType, Struct, Type};
+use crate::syntax::{
+    Field, FnArg, Item, ItemFn, ItemStruct, Module, ReturnType, Type, TypeBuffer, TypeNative,
+    TypeString,
+};
 
 pub fn bindgen(input: Module) -> TokenStream {
     let attrs = input.attrs;
@@ -23,20 +26,20 @@ pub fn bindgen(input: Module) -> TokenStream {
 
 fn expand_item(input: Item) -> TokenStream {
     match &input {
+        Item::Fn(input) => expand_function(input),
         Item::Struct(input) => expand_struct(input),
-        Item::Function(input) => expand_function(input),
     }
 }
 
-fn expand_struct(input: &Struct) -> TokenStream {
-    let attrs = input.attrs.iter();
-    let vis = &input.vis;
-    let struct_token = &input.struct_token;
-    let ident = &input.ident;
+fn expand_struct(strct: &ItemStruct) -> TokenStream {
+    let attrs = strct.attrs.iter();
+    let vis = &strct.vis;
+    let struct_token = &strct.struct_token;
+    let ident = &strct.ident;
 
     let expanded = {
-        let span = input.brace_token.span;
-        let fields = input.fields.iter();
+        let span = strct.brace_token.span;
+        let fields = strct.fields.iter();
         quote_spanned!(span => {#(#fields),*})
     };
 
@@ -48,7 +51,7 @@ fn expand_struct(input: &Struct) -> TokenStream {
     }
 }
 
-fn expand_function(input: &Function) -> TokenStream {
+fn expand_function(input: &ItemFn) -> TokenStream {
     let vis = &input.vis;
     let sig = {
         let unsafety = quote!(unsafe);
@@ -105,7 +108,7 @@ impl ToTokens for Field {
     }
 }
 
-struct ImplFunction<'a>(&'a Function);
+struct ImplFunction<'a>(&'a ItemFn);
 
 impl<'a> ToTokens for ImplFunction<'a> {
     fn to_tokens(&self, tokens: &mut TokenStream) {
@@ -157,10 +160,23 @@ impl<'a> ToTokens for BindingFnArg<'a> {
         let colon_token = &input.colon_token;
 
         match &input.ty {
-            Type::Native(_, ty) => {
-                let ident = format_ident!("__arg{}", index);
-                tokens.extend(quote_spanned!(span => #ident #colon_token #ty))
-            }
+            Type::Native(ty) => match ty {
+                TypeNative::I8(ty)
+                | TypeNative::I16(ty)
+                | TypeNative::I32(ty)
+                | TypeNative::I64(ty)
+                | TypeNative::ISize(ty)
+                | TypeNative::U8(ty)
+                | TypeNative::U16(ty)
+                | TypeNative::U32(ty)
+                | TypeNative::U64(ty)
+                | TypeNative::USize(ty)
+                | TypeNative::F32(ty)
+                | TypeNative::F64(ty) => {
+                    let ident = format_ident!("__arg{}", index);
+                    tokens.extend(quote_spanned!(span => #ident #colon_token #ty))
+                }
+            },
             // everything else is passed as a pair (pointer, length)
             _ => {
                 let ident_ptr = format_ident!("__arg{}_ptr", index);
@@ -188,18 +204,32 @@ impl<'a> ToTokens for BindingFnArgOverride<'a> {
         let ident_len = format_ident!("__arg{}_len", index);
 
         let expand = match &input.ty {
-            Type::Native(_, _) => quote_spanned!(span => let #ident = #ident_arg;),
-            Type::Json(ty) => {
+            Type::Native(_) => quote_spanned!(span => let #ident = #ident_arg;),
+            Type::Buffer(TypeBuffer::Owned(ty)) => {
                 quote_spanned! {span =>
-                    let #ident: #ty = {
+                    let mut #ident: #ty = {
                         let buf = unsafe {
-                            ::std::slice::from_raw_parts(#ident_ptr, #ident_len)
+                            ::std::slice::from_raw_parts_mut(#ident_ptr, #ident_len)
                         };
-                        sauro::serde_json::from_slice(buf).expect("failed to deserialize binding arguments")
+                        buf.to_owned().into()
                     };
                 }
             }
-            Type::OwnedString(_) => {
+            Type::Buffer(TypeBuffer::Borrowed(ty)) if ty.mutability.is_some() => {
+                quote_spanned! {span =>
+                    let mut #ident = unsafe {
+                        ::std::slice::from_raw_parts_mut(#ident_ptr, #ident_len)
+                    };
+                }
+            }
+            Type::Buffer(TypeBuffer::Borrowed(_)) => {
+                quote_spanned! {span =>
+                    let #ident = unsafe {
+                        ::std::slice::from_raw_parts(#ident_ptr, #ident_len)
+                    };
+                }
+            }
+            Type::String(TypeString::Owned(_)) => {
                 quote_spanned! {span =>
                     let #ident = {
                         let buf = unsafe {
@@ -210,7 +240,7 @@ impl<'a> ToTokens for BindingFnArgOverride<'a> {
                     };
                 }
             }
-            Type::BorrowedString(_) => {
+            Type::String(TypeString::Borrowed(_)) => {
                 quote_spanned! {span =>
                     let #ident = {
                         let buf = unsafe {
@@ -220,27 +250,13 @@ impl<'a> ToTokens for BindingFnArgOverride<'a> {
                     };
                 }
             }
-            Type::OwnedBuffer(ty) => {
+            Type::Struct(ty) => {
                 quote_spanned! {span =>
-                    let mut #ident: #ty = {
+                    let #ident: #ty = {
                         let buf = unsafe {
-                            ::std::slice::from_raw_parts_mut(#ident_ptr, #ident_len)
+                            ::std::slice::from_raw_parts(#ident_ptr, #ident_len)
                         };
-                        buf.to_owned().into()
-                    };
-                }
-            }
-            Type::BorrowedBuffer(ty) if ty.mutability.is_some() => {
-                quote_spanned! {span =>
-                    let mut #ident = unsafe {
-                        ::std::slice::from_raw_parts_mut(#ident_ptr, #ident_len)
-                    };
-                }
-            }
-            Type::BorrowedBuffer(_) => {
-                quote_spanned! {span =>
-                    let #ident = unsafe {
-                        ::std::slice::from_raw_parts(#ident_ptr, #ident_len)
+                        sauro::serde_json::from_slice(buf).expect("failed to deserialize binding arguments")
                     };
                 }
             }
@@ -253,10 +269,47 @@ impl<'a> ToTokens for BindingFnArgOverride<'a> {
 impl ToTokens for Type {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         match self {
-            Self::Native(_, ident) => ident.to_tokens(tokens),
-            Self::Json(ty) | Self::OwnedString(ty) | Self::OwnedBuffer(ty) => ty.to_tokens(tokens),
-            Self::BorrowedString(ty) => ty.to_tokens(tokens),
-            Self::BorrowedBuffer(ty) => ty.to_tokens(tokens),
+            Self::Native(ty) => ty.to_tokens(tokens),
+            Self::Buffer(ty) => ty.to_tokens(tokens),
+            Self::String(ty) => ty.to_tokens(tokens),
+            Self::Struct(ty) => ty.to_tokens(tokens),
+        }
+    }
+}
+
+impl ToTokens for TypeNative {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        match self {
+            Self::I8(ident)
+            | Self::I16(ident)
+            | Self::I32(ident)
+            | Self::I64(ident)
+            | Self::ISize(ident)
+            | Self::U8(ident)
+            | Self::U16(ident)
+            | Self::U32(ident)
+            | Self::U64(ident)
+            | Self::USize(ident)
+            | Self::F32(ident)
+            | Self::F64(ident) => ident.to_tokens(tokens),
+        }
+    }
+}
+
+impl ToTokens for TypeBuffer {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        match self {
+            Self::Owned(ty) => ty.to_tokens(tokens),
+            Self::Borrowed(ty) => ty.to_tokens(tokens),
+        }
+    }
+}
+
+impl ToTokens for TypeString {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        match self {
+            Self::Owned(ty) => ty.to_tokens(tokens),
+            Self::Borrowed(ty) => ty.to_tokens(tokens),
         }
     }
 }
@@ -276,7 +329,7 @@ impl<'a> ToTokens for BindingReturnType<'a> {
         let input = self.0;
         if let ReturnType::Type(rarrow, ty) = input {
             match ty {
-                Type::Native(_, ty) => tokens.extend(quote!(#rarrow #ty)),
+                Type::Native(ty) => tokens.extend(quote!(#rarrow #ty)),
                 _ => tokens.extend(quote!(#rarrow *const u8 )),
             }
         }
@@ -293,22 +346,18 @@ impl<'a> ToTokens for BindingReturnStmt<'a> {
             ReturnType::Default => tokens.extend(quote!((|_| ()))),
             ReturnType::Type(_, ty) => {
                 match ty {
-                    Type::Native(_, _) => tokens.extend(quote!((|x: #ty| x))),
-                    // use length-prefixed buffer to return structs and strings
-                    Type::Json(_) => tokens.extend(quote!{(|x: #ty| {
-                        let json = sauro::serde_json::to_string(&x).expect("failed to serialize binding result");
-
-                        let encoded_json = json.into_bytes();
-                        let encoded_length = (encoded_json.len() as u32).to_be_bytes();
+                    Type::Native(_) => tokens.extend(quote!((|x: #ty| x))),
+                    Type::Buffer(TypeBuffer::Owned(_)) => tokens.extend(quote!{(|x: #ty| {
+                        let encoded_length = (x.len() as u32).to_be_bytes();
 
                         let mut buffer = encoded_length.to_vec();
-                        buffer.extend(encoded_json);
+                        buffer.extend(x);
 
                         let ptr = buffer.as_ptr();
                         ::std::mem::forget(buffer);
                         ptr
                     })}),
-                    Type::OwnedString(_) => tokens.extend(quote!{(|x: #ty| {
+                    Type::String(TypeString::Owned(_)) => tokens.extend(quote!{(|x: #ty| {
                         let encoded_str = x.as_bytes();
                         let encoded_length = (encoded_str.len() as u32).to_be_bytes();
 
@@ -319,11 +368,14 @@ impl<'a> ToTokens for BindingReturnStmt<'a> {
                         ::std::mem::forget(buffer);
                         ptr
                     })}),
-                    Type::OwnedBuffer(_) => tokens.extend(quote!{(|x: #ty| {
-                        let encoded_length = (x.len() as u32).to_be_bytes();
+                    Type::Struct(_) => tokens.extend(quote!{(|x: #ty| {
+                        let json = sauro::serde_json::to_string(&x).expect("failed to serialize binding result");
+
+                        let encoded_json = json.into_bytes();
+                        let encoded_length = (encoded_json.len() as u32).to_be_bytes();
 
                         let mut buffer = encoded_length.to_vec();
-                        buffer.extend(x);
+                        buffer.extend(encoded_json);
 
                         let ptr = buffer.as_ptr();
                         ::std::mem::forget(buffer);

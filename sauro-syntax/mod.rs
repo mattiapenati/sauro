@@ -14,11 +14,11 @@ pub struct Module {
 }
 
 pub enum Item {
-    Struct(Struct),
-    Function(Function),
+    Fn(ItemFn),
+    Struct(ItemStruct),
 }
 
-pub struct Struct {
+pub struct ItemStruct {
     pub attrs: Vec<Attribute>,
     pub vis: Token![pub],
     pub struct_token: Token![struct],
@@ -35,7 +35,7 @@ pub struct Field {
     pub ty: Type,
 }
 
-pub struct Function {
+pub struct ItemFn {
     pub attrs: Vec<Attribute>,
     pub vis: Token![pub],
     pub sig: Signature,
@@ -57,31 +57,39 @@ pub struct FnArg {
     pub ty: Type,
 }
 
-pub enum Type {
-    Native(NativeKind, Ident),
-    Json(TypePath),
-    OwnedString(TypePath),
-    BorrowedString(TypeReference),
-    OwnedBuffer(TypePath),
-    BorrowedBuffer(TypeReference),
-}
-
-pub enum NativeKind {
-    U8,
-    I8,
-    U16,
-    I16,
-    U32,
-    I32,
-    U64,
-    I64,
-    USize,
-    ISize,
-    F32,
-    F64,
-}
-
 pub enum ReturnType {
     Default,
     Type(Token![->], Type),
+}
+
+pub enum Type {
+    Native(TypeNative),
+    Buffer(TypeBuffer),
+    String(TypeString),
+    Struct(TypePath),
+}
+
+pub enum TypeNative {
+    I8(Ident),
+    I16(Ident),
+    I32(Ident),
+    I64(Ident),
+    ISize(Ident),
+    U8(Ident),
+    U16(Ident),
+    U32(Ident),
+    U64(Ident),
+    USize(Ident),
+    F32(Ident),
+    F64(Ident),
+}
+
+pub enum TypeBuffer {
+    Borrowed(TypeReference),
+    Owned(TypePath),
+}
+
+pub enum TypeString {
+    Borrowed(TypeReference),
+    Owned(TypePath),
 }
