@@ -141,7 +141,7 @@ fn expand_function(
     // transform input
     for (index, input) in sig.inputs.iter().enumerate() {
         match &input.ty {
-            syntax::Type::Native(_) => {
+            syntax::Type::Native(_, _) => {
                 writeln!(out, "  const __arg{} = {};", index, input.ident)?;
             }
             syntax::Type::Json(_) => {
@@ -192,7 +192,7 @@ fn expand_function(
             write!(out, ", ")?;
         }
         match &input.ty {
-            syntax::Type::Native(_) => write!(out, "__arg{}", index)?,
+            syntax::Type::Native(_, _) => write!(out, "__arg{}", index)?,
             _ => write!(out, "__arg{0}_ptr, __arg{0}_len", index)?,
         }
     }
@@ -201,7 +201,7 @@ fn expand_function(
     // transform result
     if let syntax::ReturnType::Type(_, ty) = &sig.output {
         match &ty {
-            syntax::Type::Native(_) => {
+            syntax::Type::Native(_, _) => {
                 writeln!(out, "  return __res")?;
             }
             syntax::Type::Json(_) => {
@@ -247,16 +247,20 @@ fn expand_function(
 
 fn expand_type(out: &mut impl std::fmt::Write, ty: &syntax::Type) -> std::fmt::Result {
     match ty {
-        syntax::Type::Native(path) => {
-            let ty = path.path.segments.first().unwrap();
-            match ty.ident.to_string().as_str() {
-                "i8" | "u8" | "i16" | "u16" | "i32" | "u32" => write!(out, "number"),
-                "i64" | "u64" | "isize" | "usize" | "f32" | "f64" => {
-                    write!(out, "number | bigint")
-                }
-                s => unreachable!("unsupported type: {}", s),
-            }
-        }
+        syntax::Type::Native(kind, _) => match kind {
+            syntax::NativeKind::I8
+            | syntax::NativeKind::U8
+            | syntax::NativeKind::I16
+            | syntax::NativeKind::U16
+            | syntax::NativeKind::I32
+            | syntax::NativeKind::U32 => write!(out, "number"),
+            syntax::NativeKind::I64
+            | syntax::NativeKind::U64
+            | syntax::NativeKind::ISize
+            | syntax::NativeKind::USize
+            | syntax::NativeKind::F32
+            | syntax::NativeKind::F64 => write!(out, "number | bigint"),
+        },
         syntax::Type::Json(path) => {
             let ty = path.path.segments.first().unwrap();
             write!(out, "{}", ty.ident)
@@ -272,24 +276,20 @@ fn expand_type(out: &mut impl std::fmt::Write, ty: &syntax::Type) -> std::fmt::R
 
 fn symbol_type(ty: &syntax::Type) -> &'static str {
     match ty {
-        syntax::Type::Native(path) => {
-            let ty = path.path.segments.first().unwrap();
-            match ty.ident.to_string().as_str() {
-                "i8" => "i8",
-                "u8" => "u8",
-                "i16" => "i16",
-                "u16" => "u16",
-                "i32" => "i32",
-                "u32" => "u32",
-                "i64" => "i64",
-                "u64" => "u64",
-                "isize" => "isize",
-                "usize" => "usize",
-                "f32" => "f32",
-                "f64" => "f64",
-                s => unreachable!("unsupported type: {}", s),
-            }
-        }
+        syntax::Type::Native(kind, _) => match kind {
+            syntax::NativeKind::I8 => "i8",
+            syntax::NativeKind::U8 => "u8",
+            syntax::NativeKind::I16 => "i16",
+            syntax::NativeKind::U16 => "u16",
+            syntax::NativeKind::I32 => "i32",
+            syntax::NativeKind::U32 => "u32",
+            syntax::NativeKind::I64 => "i64",
+            syntax::NativeKind::U64 => "u64",
+            syntax::NativeKind::ISize => "isize",
+            syntax::NativeKind::USize => "usize",
+            syntax::NativeKind::F32 => "f32",
+            syntax::NativeKind::F64 => "f64",
+        },
         syntax::Type::Json(_)
         | syntax::Type::OwnedString(_)
         | syntax::Type::BorrowedString(_)
@@ -300,24 +300,20 @@ fn symbol_type(ty: &syntax::Type) -> &'static str {
 
 fn symbol_return_type(ty: &syntax::Type) -> &'static str {
     match ty {
-        syntax::Type::Native(path) => {
-            let ty = path.path.segments.first().unwrap();
-            match ty.ident.to_string().as_str() {
-                "i8" => "i8",
-                "u8" => "u8",
-                "i16" => "i16",
-                "u16" => "u16",
-                "i32" => "i32",
-                "u32" => "u32",
-                "i64" => "i64",
-                "u64" => "u64",
-                "isize" => "isize",
-                "usize" => "usize",
-                "f32" => "f32",
-                "f64" => "f64",
-                s => unreachable!("unsupported type: {}", s),
-            }
-        }
+        syntax::Type::Native(kind, _) => match kind {
+            syntax::NativeKind::I8 => "i8",
+            syntax::NativeKind::U8 => "u8",
+            syntax::NativeKind::I16 => "i16",
+            syntax::NativeKind::U16 => "u16",
+            syntax::NativeKind::I32 => "i32",
+            syntax::NativeKind::U32 => "u32",
+            syntax::NativeKind::I64 => "i64",
+            syntax::NativeKind::U64 => "u64",
+            syntax::NativeKind::ISize => "isize",
+            syntax::NativeKind::USize => "usize",
+            syntax::NativeKind::F32 => "f32",
+            syntax::NativeKind::F64 => "f64",
+        },
         syntax::Type::Json(_)
         | syntax::Type::OwnedString(_)
         | syntax::Type::BorrowedString(_)

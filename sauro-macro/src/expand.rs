@@ -156,7 +156,7 @@ impl<'a> ToTokens for BindingFnArg<'a> {
         let colon_token = &input.colon_token;
 
         match &input.ty {
-            Type::Native(ty) => {
+            Type::Native(_, ty) => {
                 let ident = format_ident!("__arg{}", index);
                 tokens.extend(quote_spanned!(span => #ident #colon_token #ty))
             }
@@ -187,7 +187,7 @@ impl<'a> ToTokens for BindingFnArgOverride<'a> {
         let ident_len = format_ident!("__arg{}_len", index);
 
         let expand = match &input.ty {
-            Type::Native(_) => quote_spanned!(span => let #ident = #ident_arg;),
+            Type::Native(_, _) => quote_spanned!(span => let #ident = #ident_arg;),
             Type::Json(ty) => {
                 quote_spanned! {span =>
                     let #ident: #ty = {
@@ -252,7 +252,7 @@ impl<'a> ToTokens for BindingFnArgOverride<'a> {
 impl ToTokens for Type {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         match self {
-            Self::Native(ident) => ident.to_tokens(tokens),
+            Self::Native(_, ident) => ident.to_tokens(tokens),
             Self::Json(ty) | Self::OwnedString(ty) | Self::OwnedBuffer(ty) => ty.to_tokens(tokens),
             Self::BorrowedString(ty) => ty.to_tokens(tokens),
             Self::BorrowedBuffer(ty) => ty.to_tokens(tokens),
@@ -275,7 +275,7 @@ impl<'a> ToTokens for BindingReturnType<'a> {
         let input = self.0;
         if let ReturnType::Type(rarrow, ty) = input {
             match ty {
-                Type::Native(ty) => tokens.extend(quote!(#rarrow #ty)),
+                Type::Native(_, ty) => tokens.extend(quote!(#rarrow #ty)),
                 _ => tokens.extend(quote!(#rarrow *const u8 )),
             }
         }
@@ -292,7 +292,7 @@ impl<'a> ToTokens for BindingReturnStmt<'a> {
             ReturnType::Default => tokens.extend(quote!((|_| ()))),
             ReturnType::Type(_, ty) => {
                 match ty {
-                    Type::Native(_) => tokens.extend(quote!((|x: #ty| x))),
+                    Type::Native(_, _) => tokens.extend(quote!((|x: #ty| x))),
                     // use length-prefixed buffer to return structs and strings
                     Type::Json(_) => tokens.extend(quote!{(|x: #ty| {
                         let json = sauro::serde_json::to_string(&x).expect("failed to serialize binding result");

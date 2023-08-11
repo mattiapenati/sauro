@@ -4,7 +4,9 @@ use syn::{
     Token, Visibility,
 };
 
-use super::{Field, FnArg, Function, Item, Module, ReturnType, Signature, Struct, Type};
+use super::{
+    Field, FnArg, Function, Item, Module, NativeKind, ReturnType, Signature, Struct, Type,
+};
 
 pub fn parse_module(input: syn::ItemMod) -> Result<Module> {
     let Some((brace_token, items)) = input.content else {
@@ -205,12 +207,22 @@ fn parse_type(input: &syn::Type) -> Result<Type> {
             let path = &path_ty.path;
             if path_ty.qself.is_none() && path.leading_colon.is_none() && path.segments.len() == 1 {
                 let segment = path.segments.first().unwrap();
-                let ident = &segment.ident;
+                let ident = segment.ident.clone();
                 if segment.arguments.is_none() {
                     let ty_name = ident.to_string();
                     match ty_name.as_str() {
-                        "i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64" | "isize"
-                        | "usize" | "f32" | "f64" => return Ok(Type::Native(path_ty.clone())),
+                        "i8" => return Ok(Type::Native(NativeKind::I8, ident)),
+                        "u8" => return Ok(Type::Native(NativeKind::U8, ident)),
+                        "i16" => return Ok(Type::Native(NativeKind::I16, ident)),
+                        "u16" => return Ok(Type::Native(NativeKind::U16, ident)),
+                        "i32" => return Ok(Type::Native(NativeKind::I32, ident)),
+                        "u32" => return Ok(Type::Native(NativeKind::U32, ident)),
+                        "i64" => return Ok(Type::Native(NativeKind::I64, ident)),
+                        "u64" => return Ok(Type::Native(NativeKind::U64, ident)),
+                        "isize" => return Ok(Type::Native(NativeKind::ISize, ident)),
+                        "usize" => return Ok(Type::Native(NativeKind::USize, ident)),
+                        "f32" => return Ok(Type::Native(NativeKind::F32, ident)),
+                        "f64" => return Ok(Type::Native(NativeKind::F64, ident)),
                         "String" => return Ok(Type::OwnedString(path_ty.clone())),
                         "Box" => {
                             if let PathArguments::AngleBracketed(args) = &segment.arguments {
@@ -304,9 +316,10 @@ fn parse_return_type(input: &syn::ReturnType) -> Result<ReturnType> {
         syn::ReturnType::Type(rarrow, ty) => {
             let ty = parse_type(ty)?;
             match &ty {
-                Type::Native(_) | Type::Json(_) | Type::OwnedString(_) | Type::OwnedBuffer(_) => {
-                    ReturnType::Type(*rarrow, ty)
-                }
+                Type::Native(_, _)
+                | Type::Json(_)
+                | Type::OwnedString(_)
+                | Type::OwnedBuffer(_) => ReturnType::Type(*rarrow, ty),
                 _ => return Err(Error::new_spanned(input, "unsupported return type")),
             }
         }

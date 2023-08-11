@@ -58,14 +58,27 @@ pub struct FnArg {
 }
 
 pub enum Type {
-    /// Native types are passed as is
-    Native(TypePath),
-    /// Struct and enum are passed using json serialization
+    Native(NativeKind, Ident),
     Json(TypePath),
     OwnedString(TypePath),
     BorrowedString(TypeReference),
     OwnedBuffer(TypePath),
     BorrowedBuffer(TypeReference),
+}
+
+pub enum NativeKind {
+    U8,
+    I8,
+    U16,
+    I16,
+    U32,
+    I32,
+    U64,
+    I64,
+    USize,
+    ISize,
+    F32,
+    F64,
 }
 
 pub enum ReturnType {
