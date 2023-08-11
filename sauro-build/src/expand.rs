@@ -77,6 +77,7 @@ fn expand_symbols<'a>(
         let sig = &func.sig;
         writeln!(out, r#"    "{}": {{"#, sig.ident)?;
 
+        // input parameters
         write!(out, r#"      "parameters": ["#)?;
         for (index, input) in sig.inputs.iter().enumerate() {
             if index > 0 {
@@ -86,12 +87,18 @@ fn expand_symbols<'a>(
         }
         writeln!(out, "],")?;
 
+        // output results
         match &sig.output {
             syntax::ReturnType::Default => writeln!(out, r#"      "result": "void","#)?,
             syntax::ReturnType::Type(_, ty) => {
                 writeln!(out, r#"      "result": "{}","#, symbol_return_type(ty))?
             }
         }
+
+        // non blocking
+        let non_blocking = is_non_blocking_fn(func);
+        writeln!(out, r#"      "nonblocking": {:?},"#, non_blocking)?;
+
         writeln!(out, r#"    }},"#)?;
     }
 
@@ -106,6 +113,7 @@ fn expand_function(
 ) -> Result<Utilities, std::fmt::Error> {
     let sig = &func.sig;
     let has_inputs = !sig.inputs.is_empty();
+    let non_blocking = is_non_blocking_fn(func);
     let mut utilities = Utilities::default();
 
     // signature
@@ -120,7 +128,13 @@ fn expand_function(
     write!(out, ")")?;
     if let syntax::ReturnType::Type(_, ty) = &sig.output {
         write!(out, ": ")?;
+        if non_blocking {
+            write!(out, "Promise<")?;
+        }
         expand_type(out, ty)?;
+        if non_blocking {
+            write!(out, ">")?;
+        }
     }
     writeln!(out, " {{")?;
 
@@ -191,17 +205,35 @@ fn expand_function(
                 writeln!(out, "  return __res")?;
             }
             syntax::Type::Json(_) => {
-                writeln!(out, "  return __structDecode(__lenPrefixedBuffer(__res));")?;
+                if non_blocking {
+                    writeln!(
+                        out,
+                        "  return __res.then(__lenPrefixedBuffer).then(__structDecode);"
+                    )?;
+                } else {
+                    writeln!(out, "  return __structDecode(__lenPrefixedBuffer(__res));")?;
+                }
                 utilities.struct_decode = true;
                 utilities.len_prefixed_buffer = true;
             }
             syntax::Type::BorrowedString(_) | syntax::Type::OwnedString(_) => {
-                writeln!(out, "  return __stringDecode(__lenPrefixedBuffer(__res));")?;
+                if non_blocking {
+                    writeln!(
+                        out,
+                        "  return __res.then(__lenPrefixedBuffer).then(__stringDecode);"
+                    )?;
+                } else {
+                    writeln!(out, "  return __stringDecode(__lenPrefixedBuffer(__res));")?;
+                }
                 utilities.string_decode = true;
                 utilities.len_prefixed_buffer = true;
             }
             syntax::Type::BorrowedBuffer(_) | syntax::Type::OwnedBuffer(_) => {
-                writeln!(out, "  return __lenPrefixedBuffer(__res);")?;
+                if non_blocking {
+                    writeln!(out, "  return __res.then(__lenPrefixedBuffer);")?;
+                } else {
+                    writeln!(out, "  return __lenPrefixedBuffer(__res);")?;
+                }
                 utilities.len_prefixed_buffer = true;
             }
         }
@@ -365,4 +397,19 @@ impl Utilities {
 
         Ok(())
     }
+}
+
+fn is_non_blocking_fn(func: &syntax::Function) -> bool {
+    for attr in &func.attrs {
+        if let syn::Meta::Path(path) = &attr.meta {
+            let segments = &path.segments;
+            if segments.len() == 2
+                && segments[0].ident == "sauro"
+                && segments[1].ident == "non_blocking"
+            {
+                return true;
+            }
+        }
+    }
+    false
 }

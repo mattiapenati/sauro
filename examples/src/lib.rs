@@ -13,6 +13,7 @@ mod deno {
         a + b
     }
 
+    #[sauro::non_blocking]
     pub fn concat(a: &str, b: &str) -> String {
         format!("{}{}", a, b)
     }
