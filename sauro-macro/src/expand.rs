@@ -42,7 +42,8 @@ fn expand_struct(input: &Struct) -> TokenStream {
 
     quote! {
         #(#attrs)*
-        #[derive(serde::Serialize, serde::Deserialize)]
+        #[derive(::sauro::serde::Serialize, ::sauro::serde::Deserialize)]
+        #[serde(crate = "::sauro::serde")]
         #vis #struct_token #ident #expanded
     }
 }

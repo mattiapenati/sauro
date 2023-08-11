@@ -9,4 +9,3 @@ crate-type = ["cdylib"]
 
 [dependencies]
 sauro = { path = "../sauro" }
-serde = { version = "1", features = ["derive"] }
