@@ -1,5 +1,4 @@
 mod expand;
-#[path = "../../sauro-macro/src/syntax/mod.rs"]
 mod syntax;
 
 use std::{
