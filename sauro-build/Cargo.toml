@@ -4,5 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+anyhow = "1"
+camino = "1"
+cargo = "0.72"
+clap = { version = "4", features = ["derive", "wrap_help"] }
+minijinja = "1"
 proc-macro2 = "1"
+serde = { version = "1", features = ["derive"] }
 syn = { version = "2", features = ["full"] }
