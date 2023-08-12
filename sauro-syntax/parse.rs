@@ -1,7 +1,7 @@
 use proc_macro2::Span;
 use syn::{
-    punctuated::Punctuated, spanned::Spanned, Error, GenericArgument, Pat, PathArguments, Result,
-    Token, Visibility,
+    punctuated::Punctuated, spanned::Spanned, GenericArgument, Pat, PathArguments, Token,
+    Visibility,
 };
 
 use super::{
@@ -9,12 +9,15 @@ use super::{
     TypeNative, TypeString,
 };
 
-pub fn parse_module(input: syn::ItemMod) -> Result<Module> {
+pub fn parse_module(input: syn::ItemMod) -> syn::Result<Module> {
     let Some((brace_token, items)) = input.content else {
-        return Err(Error::new_spanned(&input, "modules can not be empty"));
+        return Err(syn::Error::new_spanned(&input, "modules can not be empty"));
     };
 
-    let items = items.into_iter().map(parse_item).collect::<Result<_>>()?;
+    let items = items
+        .into_iter()
+        .map(Item::try_from)
+        .collect::<syn::Result<_>>()?;
 
     let attrs = input.attrs;
     let vis = visibility_pub(&input.vis, input.ident.span());
@@ -31,309 +34,418 @@ pub fn parse_module(input: syn::ItemMod) -> Result<Module> {
     })
 }
 
-fn parse_item(input: syn::Item) -> Result<Item> {
-    match input {
-        syn::Item::Struct(input) => Ok(Item::Struct(parse_struct(input)?)),
-        syn::Item::Fn(input) => Ok(Item::Fn(parse_function(input)?)),
-        input => Err(Error::new_spanned(input, "unsupported item")),
+impl TryFrom<syn::Item> for Item {
+    type Error = syn::Error;
+
+    fn try_from(value: syn::Item) -> syn::Result<Self> {
+        match value {
+            syn::Item::Struct(value) => ItemStruct::try_from(value).map(Item::Struct),
+            syn::Item::Fn(value) => ItemFn::try_from(value).map(Item::Fn),
+            input => Err(syn::Error::new_spanned(input, "unsupported item")),
+        }
     }
 }
 
-fn parse_struct(input: syn::ItemStruct) -> Result<ItemStruct> {
-    let params = &input.generics.params;
-    if !params.is_empty() {
-        return Err(Error::new_spanned(
-            params,
-            "type parameters are not supported",
-        ));
-    }
+impl TryFrom<syn::ItemStruct> for ItemStruct {
+    type Error = syn::Error;
 
-    let mut fields = Punctuated::new();
-    let brace_token = match input.fields {
-        syn::Fields::Named(named_fields) => {
-            for pair in named_fields.named.into_pairs() {
-                let (field, punct) = pair.into_tuple();
-                let field = parse_field(field)?;
+    fn try_from(value: syn::ItemStruct) -> syn::Result<Self> {
+        let params = &value.generics.params;
+        if !params.is_empty() {
+            return Err(syn::Error::new_spanned(
+                params,
+                "type parameters are not supported",
+            ));
+        }
 
-                fields.push_value(field);
-                if let Some(punct) = punct {
-                    fields.push_punct(punct);
+        let mut fields = Punctuated::new();
+        let brace_token = match value.fields {
+            syn::Fields::Named(named_fields) => {
+                for pair in named_fields.named.into_pairs() {
+                    let (field, punct) = pair.into_tuple();
+
+                    let field = field.try_into()?;
+                    fields.push_value(field);
+
+                    if let Some(punct) = punct {
+                        fields.push_punct(punct);
+                    }
                 }
+
+                named_fields.brace_token
             }
+            syn::Fields::Unnamed(_) => {
+                return Err(syn::Error::new_spanned(
+                    value,
+                    "tuple structs are not supported",
+                ))
+            }
+            syn::Fields::Unit => {
+                return Err(syn::Error::new_spanned(
+                    value,
+                    "unit structs are not supported",
+                ))
+            }
+        };
 
-            named_fields.brace_token
-        }
-        syn::Fields::Unnamed(_) => {
-            return Err(Error::new_spanned(input, "tuple structs are not supported"))
-        }
-        syn::Fields::Unit => {
-            return Err(Error::new_spanned(input, "unit structs are not supported"))
-        }
-    };
+        let attrs = value.attrs;
+        let vis = visibility_pub(&value.vis, value.ident.span());
+        let struct_token = value.struct_token;
+        let ident = value.ident.clone();
 
-    let attrs = input.attrs;
-    let vis = visibility_pub(&input.vis, input.ident.span());
-    let struct_token = input.struct_token;
-    let ident = input.ident.clone();
-
-    Ok(ItemStruct {
-        attrs,
-        vis,
-        struct_token,
-        ident,
-        brace_token,
-        fields,
-    })
-}
-
-fn parse_field(input: syn::Field) -> Result<Field> {
-    let attrs = input.attrs;
-    let vis = visibility_pub(&input.vis, input.ident.span());
-    let ident = input.ident.unwrap();
-    let colon_token = input.colon_token.unwrap();
-    let ty = parse_type(&input.ty)?;
-
-    Ok(Field {
-        attrs,
-        vis,
-        ident,
-        colon_token,
-        ty,
-    })
-}
-
-fn parse_function(input: syn::ItemFn) -> Result<ItemFn> {
-    let attrs = input.attrs;
-    let vis = visibility_pub(&input.vis, input.sig.span());
-    let sig = parse_signature(input.sig)?;
-    let block = input.block;
-
-    Ok(ItemFn {
-        attrs,
-        vis,
-        sig,
-        block,
-    })
-}
-
-fn parse_signature(input: syn::Signature) -> Result<Signature> {
-    if input.constness.is_some() {
-        return Err(Error::new_spanned(
-            input.constness,
-            "const functions are not supported",
-        ));
-    }
-    if input.asyncness.is_some() {
-        return Err(Error::new_spanned(
-            input.asyncness,
-            "async functions are not supported",
-        ));
-    }
-    if input.unsafety.is_some() {
-        return Err(Error::new_spanned(
-            input.unsafety,
-            "unsafe functions are not supported",
-        ));
-    }
-    if input.abi.is_some() {
-        // variadic argument is allowed only in extern function, then it should not be checked
-        return Err(Error::new_spanned(
-            input.abi,
-            "extern functions are not supported",
-        ));
-    }
-    if !input.generics.params.is_empty() {
-        return Err(Error::new_spanned(
-            input.generics,
-            "function parameters are not supported",
-        ));
-    }
-
-    let fn_token = input.fn_token;
-    let ident = input.ident;
-    let paren_token = input.paren_token;
-
-    let mut inputs = Punctuated::new();
-    for pair in input.inputs.into_pairs() {
-        let (fn_arg, punct) = pair.into_tuple();
-        let fn_arg = parse_function_arg(&fn_arg)?;
-
-        inputs.push_value(fn_arg);
-        if let Some(punct) = punct {
-            inputs.push_punct(punct);
-        }
-    }
-
-    let output = parse_return_type(&input.output)?;
-
-    Ok(Signature {
-        fn_token,
-        ident,
-        paren_token,
-        inputs,
-        output,
-    })
-}
-
-fn parse_function_arg(input: &syn::FnArg) -> Result<FnArg> {
-    match input {
-        syn::FnArg::Receiver(_) => Err(Error::new_spanned(input, "self argument is not supported")),
-        syn::FnArg::Typed(fn_arg) => {
-            let (mutability, ident) = match &*fn_arg.pat {
-                Pat::Ident(pat) => (pat.mutability, pat.ident.clone()),
-                _ => {
-                    return Err(Error::new_spanned(
-                        fn_arg,
-                        "pattern matching is not supported",
-                    ))
-                }
-            };
-            let colon_token = fn_arg.colon_token;
-            let ty = parse_type(&fn_arg.ty)?;
-
-            Ok(FnArg {
-                mutability,
-                ident,
-                colon_token,
-                ty,
-            })
-        }
+        Ok(ItemStruct {
+            attrs,
+            vis,
+            struct_token,
+            ident,
+            brace_token,
+            fields,
+        })
     }
 }
 
-fn parse_type(input: &syn::Type) -> Result<Type> {
-    match input {
-        // handling native type
-        syn::Type::Path(path_ty) => {
-            let path = &path_ty.path;
-            if path_ty.qself.is_none() && path.leading_colon.is_none() && path.segments.len() == 1 {
-                let path = path.clone();
-                let segment = path.segments.first().unwrap();
-                let ident = &segment.ident;
-                if segment.arguments.is_none() {
-                    let ty_name = ident.to_string();
-                    match ty_name.as_str() {
-                        "i8" => return Ok(Type::Native(TypeNative::I8(ident.clone()))),
-                        "i16" => return Ok(Type::Native(TypeNative::I16(ident.clone()))),
-                        "i32" => return Ok(Type::Native(TypeNative::I32(ident.clone()))),
-                        "i64" => return Ok(Type::Native(TypeNative::I64(ident.clone()))),
-                        "isize" => return Ok(Type::Native(TypeNative::ISize(ident.clone()))),
-                        "u8" => return Ok(Type::Native(TypeNative::U8(ident.clone()))),
-                        "u16" => return Ok(Type::Native(TypeNative::U16(ident.clone()))),
-                        "u32" => return Ok(Type::Native(TypeNative::U32(ident.clone()))),
-                        "u64" => return Ok(Type::Native(TypeNative::U64(ident.clone()))),
-                        "usize" => return Ok(Type::Native(TypeNative::USize(ident.clone()))),
-                        "f32" => return Ok(Type::Native(TypeNative::F32(ident.clone()))),
-                        "f64" => return Ok(Type::Native(TypeNative::F64(ident.clone()))),
-                        "String" => return Ok(Type::String(TypeString::Owned(path_ty.clone()))),
-                        "Box" => {
-                            if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                                if let Some(GenericArgument::Type(syn::Type::Slice(box_ty))) =
-                                    args.args.first()
-                                {
-                                    if let syn::Type::Path(elem_ty) = &*box_ty.elem {
-                                        if let Some(segment) = elem_ty.path.segments.first() {
-                                            let ident = &segment.ident;
+impl TryFrom<syn::ItemFn> for ItemFn {
+    type Error = syn::Error;
 
-                                            if *ident == "u8" {
-                                                return Ok(Type::Buffer(TypeBuffer::Owned(
-                                                    path_ty.clone(),
-                                                )));
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        "Vec" => {
-                            if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                                if let Some(GenericArgument::Type(syn::Type::Path(vec_ty))) =
-                                    args.args.first()
-                                {
-                                    if let Some(segment) = vec_ty.path.segments.first() {
-                                        let ident = &segment.ident;
+    fn try_from(value: syn::ItemFn) -> syn::Result<Self> {
+        let attrs = value.attrs;
+        let vis = visibility_pub(&value.vis, value.sig.span());
+        let sig = value.sig.try_into()?;
+        let block = value.block;
 
-                                        if *ident == "u8" {
-                                            return Ok(Type::Buffer(TypeBuffer::Owned(
-                                                path_ty.clone(),
-                                            )));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        _ => return Ok(Type::Struct(path_ty.clone())),
-                    };
-                }
+        Ok(ItemFn {
+            attrs,
+            vis,
+            sig,
+            block,
+        })
+    }
+}
+
+impl TryFrom<syn::Field> for Field {
+    type Error = syn::Error;
+
+    fn try_from(value: syn::Field) -> syn::Result<Self> {
+        let attrs = value.attrs;
+        let vis = visibility_pub(&value.vis, value.ident.span());
+        let ident = value.ident.unwrap();
+        let colon_token = value.colon_token.unwrap();
+        let ty = Type::try_from(&value.ty)?;
+
+        Ok(Field {
+            attrs,
+            vis,
+            ident,
+            colon_token,
+            ty,
+        })
+    }
+}
+
+impl TryFrom<syn::Signature> for Signature {
+    type Error = syn::Error;
+
+    fn try_from(value: syn::Signature) -> syn::Result<Signature> {
+        if value.constness.is_some() {
+            return Err(syn::Error::new_spanned(
+                value.constness,
+                "const functions are not supported",
+            ));
+        }
+        if value.asyncness.is_some() {
+            return Err(syn::Error::new_spanned(
+                value.asyncness,
+                "async functions are not supported",
+            ));
+        }
+        if value.unsafety.is_some() {
+            return Err(syn::Error::new_spanned(
+                value.unsafety,
+                "unsafe functions are not supported",
+            ));
+        }
+        if value.abi.is_some() {
+            // variadic argument is allowed only in extern function, then it should not be checked
+            return Err(syn::Error::new_spanned(
+                value.abi,
+                "extern functions are not supported",
+            ));
+        }
+        if !value.generics.params.is_empty() {
+            return Err(syn::Error::new_spanned(
+                value.generics,
+                "function parameters are not supported",
+            ));
+        }
+
+        let fn_token = value.fn_token;
+        let ident = value.ident;
+        let paren_token = value.paren_token;
+
+        let mut inputs = Punctuated::new();
+        for pair in value.inputs.into_pairs() {
+            let (fn_arg, punct) = pair.into_tuple();
+
+            let fn_arg = fn_arg.try_into()?;
+            inputs.push_value(fn_arg);
+
+            if let Some(punct) = punct {
+                inputs.push_punct(punct);
             }
         }
-        syn::Type::Reference(reference_ty) => {
-            // only reference without lifetime and mutability are supported
-            if reference_ty.lifetime.is_none() {
-                match &*reference_ty.elem {
-                    syn::Type::Path(ty) => {
-                        let path = &ty.path;
-                        if ty.qself.is_none()
-                            && path.leading_colon.is_none()
-                            && path.segments.len() == 1
-                        {
-                            let segment = &path.segments[0];
-                            let ident = segment.ident.clone();
-                            if segment.arguments.is_none() {
-                                let ty_name = ident.to_string();
-                                if ty_name == "str" {
-                                    return Ok(Type::String(TypeString::Borrowed(
-                                        reference_ty.clone(),
-                                    )));
+
+        let output = value.output.try_into()?;
+
+        Ok(Signature {
+            fn_token,
+            ident,
+            paren_token,
+            inputs,
+            output,
+        })
+    }
+}
+
+impl TryFrom<syn::FnArg> for FnArg {
+    type Error = syn::Error;
+
+    fn try_from(value: syn::FnArg) -> syn::Result<FnArg> {
+        let syn::FnArg::Typed(fn_arg) = value else {
+            return Err(syn::Error::new_spanned(value, "self argument is not supported"));
+        };
+
+        let (mutability, ident) = match fn_arg.pat.as_ref() {
+            Pat::Ident(pat) => (pat.mutability, pat.ident.clone()),
+            _ => {
+                return Err(syn::Error::new_spanned(
+                    fn_arg,
+                    "pattern matching is not supported",
+                ))
+            }
+        };
+        let colon_token = fn_arg.colon_token;
+        let ty = Type::try_from(fn_arg.ty.as_ref())?;
+
+        Ok(FnArg {
+            mutability,
+            ident,
+            colon_token,
+            ty,
+        })
+    }
+}
+
+impl TryFrom<syn::ReturnType> for ReturnType {
+    type Error = syn::Error;
+
+    fn try_from(value: syn::ReturnType) -> syn::Result<ReturnType> {
+        let syn::ReturnType::Type(rarrow, ref ty) = value else {
+            return Ok(ReturnType::Default)
+        };
+        let ty = Type::try_from(ty.as_ref())?;
+        let return_type = match ty {
+            Type::Native(_)
+            | Type::Struct(_)
+            | Type::String(TypeString::Owned(_))
+            | Type::Buffer(TypeBuffer::Owned(_)) => ReturnType::Type(rarrow, ty),
+            _ => return Err(syn::Error::new_spanned(value, "unsupported return type")),
+        };
+        Ok(return_type)
+    }
+}
+
+impl TryFrom<&syn::TypePath> for TypeNative {
+    type Error = syn::Error;
+
+    fn try_from(value: &syn::TypePath) -> syn::Result<Self> {
+        let path = &value.path;
+        if value.qself.is_some() || path.leading_colon.is_some() || path.segments.len() != 1 {
+            return Err(syn::Error::new_spanned(value, "unsupported type"));
+        }
+
+        let ident = path.segments[0].ident.clone();
+        let res = match ident.to_string().as_str() {
+            "i8" => Self::I8(ident),
+            "i16" => Self::I16(ident),
+            "i32" => Self::I32(ident),
+            "i64" => Self::I64(ident),
+            "isize" => Self::ISize(ident),
+            "u8" => Self::U8(ident),
+            "u16" => Self::U16(ident),
+            "u32" => Self::U32(ident),
+            "u64" => Self::U64(ident),
+            "usize" => Self::USize(ident),
+            "f32" => Self::F32(ident),
+            "f64" => Self::F64(ident),
+            _ => return Err(syn::Error::new_spanned(value, "unsupported type")),
+        };
+
+        Ok(res)
+    }
+}
+
+impl TryFrom<&syn::TypePath> for TypeBuffer {
+    type Error = syn::Error;
+
+    fn try_from(value: &syn::TypePath) -> syn::Result<Self> {
+        if value.qself.is_none() {
+            let path = &value.path;
+            let segments = &path.segments;
+
+            let is_box = (segments.len() == 1 && segments[0].ident == "Box")
+                || (segments.len() == 3
+                    && (segments[0].ident == "alloc" || segments[0].ident == "std")
+                    && segments[1].ident == "boxed"
+                    && segments[2].ident == "Box");
+            if is_box {
+                let segment = segments.last().unwrap();
+                if let PathArguments::AngleBracketed(args) = &segment.arguments {
+                    if let Some(GenericArgument::Type(syn::Type::Slice(box_ty))) = args.args.first()
+                    {
+                        if let syn::Type::Path(elem_ty) = &*box_ty.elem {
+                            if let Some(segment) = elem_ty.path.segments.first() {
+                                if segment.ident == "u8" {
+                                    return Ok(Self::Owned(value.clone()));
                                 }
                             }
                         }
                     }
-                    syn::Type::Slice(ty) => {
-                        if let syn::Type::Path(ty) = &*ty.elem {
-                            let path = &ty.path;
-                            if ty.qself.is_none()
-                                && path.leading_colon.is_none()
-                                && path.segments.len() == 1
-                            {
-                                let segment = &path.segments[0];
-                                let ident = segment.ident.clone();
-                                if segment.arguments.is_none() {
-                                    let ty_name = ident.to_string();
-                                    if ty_name == "u8" {
-                                        let ty = Type::Buffer(TypeBuffer::Borrowed(
-                                            reference_ty.clone(),
-                                        ));
-                                        return Ok(ty);
-                                    }
+                }
+            }
+
+            let is_vec = (segments.len() == 1 && segments[0].ident == "Vec")
+                || (segments.len() == 3
+                    && (segments[0].ident == "alloc" || segments[0].ident == "std")
+                    && segments[1].ident == "vec"
+                    && segments[2].ident == "Vec");
+            if is_vec {
+                let segment = segments.last().unwrap();
+                if let PathArguments::AngleBracketed(args) = &segment.arguments {
+                    if let Some(GenericArgument::Type(syn::Type::Path(vec_ty))) = args.args.first()
+                    {
+                        if let Some(segment) = vec_ty.path.segments.first() {
+                            let ident = &segment.ident;
+
+                            if *ident == "u8" {
+                                return Ok(Self::Owned(value.clone()));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Err(syn::Error::new_spanned(value, "unsupported type"))
+    }
+}
+
+impl TryFrom<&syn::TypeReference> for TypeBuffer {
+    type Error = syn::Error;
+
+    fn try_from(value: &syn::TypeReference) -> syn::Result<Self> {
+        if value.lifetime.is_none() {
+            if let syn::Type::Slice(ty) = value.elem.as_ref() {
+                if let syn::Type::Path(ty) = ty.elem.as_ref() {
+                    let path = &ty.path;
+                    if ty.qself.is_none()
+                        && path.leading_colon.is_none()
+                        && path.segments.len() == 1
+                    {
+                        let segment = &path.segments[0];
+                        let ident = &segment.ident;
+                        if segment.arguments.is_none() && ident == "u8" {
+                            return Ok(TypeBuffer::Borrowed(value.clone()));
+                        }
+                    }
+                }
+            }
+        }
+
+        Err(syn::Error::new_spanned(value, "unsupported type"))
+    }
+}
+
+impl TryFrom<&syn::TypePath> for TypeString {
+    type Error = syn::Error;
+
+    fn try_from(value: &syn::TypePath) -> syn::Result<Self> {
+        if value.qself.is_none() {
+            let path = &value.path;
+            let segments = &path.segments;
+
+            let is_box = (segments.len() == 1 && segments[0].ident == "Box")
+                || (segments.len() == 3
+                    && (segments[0].ident == "alloc" || segments[0].ident == "std")
+                    && segments[1].ident == "boxed"
+                    && segments[2].ident == "Box");
+            if is_box {
+                let segment = segments.last().unwrap();
+                if let PathArguments::AngleBracketed(args) = &segment.arguments {
+                    if let Some(GenericArgument::Type(syn::Type::Slice(box_ty))) = args.args.first()
+                    {
+                        if let syn::Type::Path(elem_ty) = box_ty.elem.as_ref() {
+                            if let Some(segment) = elem_ty.path.segments.first() {
+                                if segment.ident == "str" {
+                                    return Ok(Self::Owned(value.clone()));
                                 }
                             }
                         }
                     }
-                    _ => {}
+                }
+            }
+
+            let is_string = (segments.len() == 1 && segments[0].ident == "String")
+                || (segments.len() == 3
+                    && (segments[0].ident == "alloc" || segments[0].ident == "std")
+                    && segments[1].ident == "string"
+                    && segments[2].ident == "String");
+            if is_string {
+                return Ok(Self::Owned(value.clone()));
+            }
+        }
+
+        Err(syn::Error::new_spanned(value, "unsupported type"))
+    }
+}
+
+impl TryFrom<&syn::TypeReference> for TypeString {
+    type Error = syn::Error;
+
+    fn try_from(value: &syn::TypeReference) -> syn::Result<Self> {
+        if value.lifetime.is_none() {
+            if let syn::Type::Path(ty) = value.elem.as_ref() {
+                let path = &ty.path;
+                if ty.qself.is_none() && path.leading_colon.is_none() && path.segments.len() == 1 {
+                    let segment = &path.segments[0];
+                    let ident = &segment.ident;
+                    if segment.arguments.is_none() && ident == "str" {
+                        return Ok(TypeString::Borrowed(value.clone()));
+                    }
                 }
             }
         }
-        _ => {}
+
+        Err(syn::Error::new_spanned(value, "unsupported type"))
     }
-    Err(Error::new_spanned(input, "unsupported type"))
 }
 
-fn parse_return_type(input: &syn::ReturnType) -> Result<ReturnType> {
-    let return_type = match input {
-        syn::ReturnType::Default => ReturnType::Default,
-        syn::ReturnType::Type(rarrow, ty) => {
-            let ty = parse_type(ty)?;
-            match &ty {
-                Type::Native(_)
-                | Type::Struct(_)
-                | Type::String(TypeString::Owned(_))
-                | Type::Buffer(TypeBuffer::Owned(_)) => ReturnType::Type(*rarrow, ty),
-                _ => return Err(Error::new_spanned(input, "unsupported return type")),
-            }
-        }
-    };
-    Ok(return_type)
+impl TryFrom<&syn::Type> for Type {
+    type Error = syn::Error;
+
+    fn try_from(value: &syn::Type) -> syn::Result<Self> {
+        let res = match value {
+            syn::Type::Path(ty) => TypeNative::try_from(ty)
+                .map(Type::Native)
+                .or_else(|_| TypeBuffer::try_from(ty).map(Type::Buffer))
+                .or_else(|_| TypeString::try_from(ty).map(Type::String))
+                .unwrap_or_else(|_| Type::Struct(ty.clone())),
+            syn::Type::Reference(ty) => TypeBuffer::try_from(ty)
+                .map(Type::Buffer)
+                .or_else(|_| TypeString::try_from(ty).map(Type::String))?,
+            _ => return Err(syn::Error::new_spanned(value, "unsupported type")),
+        };
+        Ok(res)
+    }
 }
 
 fn visibility_pub(vis: &Visibility, span: Span) -> Token![pub] {
