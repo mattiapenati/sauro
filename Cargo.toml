@@ -1,5 +1,5 @@
 [workspace]
-members = ["examples", "sauro", "sauro-build", "sauro-macro"]
+members = ["examples", "sauro", "sauro-cli", "sauro-macro"]
 
 [workspace.package]
 authors = ["Mattia Penati <mattia.penati@protonmail.com>"]

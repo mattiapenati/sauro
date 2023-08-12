@@ -1,5 +1,5 @@
 [package]
-name = "sauro-build"
+name = "sauro-cli"
 version = "0.1.0"
 description = "Typescript code generator for Deno FFI libraries written in Rust"
 readme = "../README.md"
