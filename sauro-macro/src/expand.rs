@@ -4,7 +4,7 @@ use syn::spanned::Spanned;
 
 use crate::syntax::{
     Field, FnArg, Item, ItemFn, ItemStruct, Module, ReturnType, Type, TypeBuffer, TypeNative,
-    TypeString,
+    TypeOption, TypeString,
 };
 
 pub fn bindgen(input: Module) -> TokenStream {
@@ -258,6 +258,17 @@ impl<'a> ToTokens for BindingFnArgOverride<'a> {
                     };
                 }
             }
+            Type::Option(ty) => {
+                let ty = &ty.ty;
+                quote_spanned! {span =>
+                    let #ident: #ty = {
+                        let buf = unsafe {
+                            ::std::slice::from_raw_parts(#ident_ptr, #ident_len)
+                        };
+                        sauro::serde_json::from_slice(buf).expect("failed to deserialize binding arguments")
+                    };
+                }
+            }
             Type::Struct(ty) => {
                 quote_spanned! {span =>
                     let #ident: #ty = {
@@ -280,6 +291,7 @@ impl quote::ToTokens for Type {
             Self::Native(ty) => ty.to_tokens(tokens),
             Self::Buffer(ty) => ty.to_tokens(tokens),
             Self::String(ty) => ty.to_tokens(tokens),
+            Self::Option(ty) => ty.to_tokens(tokens),
             Self::Struct(ty) => ty.to_tokens(tokens),
         }
     }
@@ -319,6 +331,12 @@ impl quote::ToTokens for TypeString {
             Self::Owned(ty) => ty.to_tokens(tokens),
             Self::Borrowed(ty) => ty.to_tokens(tokens),
         }
+    }
+}
+
+impl quote::ToTokens for TypeOption {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        self.ty.to_tokens(tokens);
     }
 }
 
@@ -376,7 +394,7 @@ impl<'a> ToTokens for BindingReturnStmt<'a> {
                         ::std::mem::forget(buffer);
                         ptr
                     })}),
-                    Type::Struct(_) => tokens.extend(quote!{(|x: #ty| {
+                    Type::Struct(_) | Type::Option(_) => tokens.extend(quote!{(|x: #ty| {
                         let json = sauro::serde_json::to_string(&x).expect("failed to serialize binding result");
 
                         let encoded_json = json.into_bytes();
@@ -389,7 +407,7 @@ impl<'a> ToTokens for BindingReturnStmt<'a> {
                         ::std::mem::forget(buffer);
                         ptr
                     })}),
-                    _ => unreachable!("unsupported return type")
+                    Type::Buffer(TypeBuffer::Borrowed(_)) | Type::String(TypeString::Borrowed(_)) => unreachable!("unsupported return type")
                 }
             }
         }

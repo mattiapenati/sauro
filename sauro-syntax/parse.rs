@@ -6,7 +6,7 @@ use syn::{
 
 use super::{
     Field, FnArg, Item, ItemFn, ItemStruct, Module, ReturnType, Signature, Type, TypeBuffer,
-    TypeNative, TypeString,
+    TypeNative, TypeOption, TypeString,
 };
 
 pub fn parse_module(input: syn::ItemMod) -> syn::Result<Module> {
@@ -245,9 +245,10 @@ impl TryFrom<syn::ReturnType> for ReturnType {
         let ty = Type::try_from(ty.as_ref())?;
         let return_type = match ty {
             Type::Native(_)
-            | Type::Struct(_)
             | Type::String(TypeString::Owned(_))
-            | Type::Buffer(TypeBuffer::Owned(_)) => ReturnType::Type(rarrow, ty),
+            | Type::Buffer(TypeBuffer::Owned(_))
+            | Type::Option(_)
+            | Type::Struct(_) => ReturnType::Type(rarrow, ty),
             _ => return Err(syn::Error::new_spanned(value, "unsupported return type")),
         };
         Ok(return_type)
@@ -381,14 +382,14 @@ impl TryFrom<&syn::TypePath> for TypeString {
             if is_box {
                 let segment = segments.last().unwrap();
                 if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                    if let Some(GenericArgument::Type(syn::Type::Slice(box_ty))) = args.args.first()
+                    if let Some(GenericArgument::Type(syn::Type::Path(box_ty))) = args.args.first()
                     {
-                        if let syn::Type::Path(elem_ty) = box_ty.elem.as_ref() {
-                            if let Some(segment) = elem_ty.path.segments.first() {
-                                if segment.ident == "str" {
-                                    return Ok(Self::Owned(value.clone()));
-                                }
-                            }
+                        let segments = &box_ty.path.segments;
+                        if box_ty.qself.is_none()
+                            && segments.len() == 1
+                            && segments[0].ident == "str"
+                        {
+                            return Ok(Self::Owned(value.clone()));
                         }
                     }
                 }
@@ -429,6 +430,37 @@ impl TryFrom<&syn::TypeReference> for TypeString {
     }
 }
 
+impl TryFrom<&syn::TypePath> for TypeOption {
+    type Error = syn::Error;
+
+    fn try_from(value: &syn::TypePath) -> syn::Result<Self> {
+        if value.qself.is_none() {
+            let path = &value.path;
+            let segments = &path.segments;
+
+            let is_option = (segments.len() == 1 && segments[0].ident == "Option")
+                || (segments.len() == 3
+                    && (segments[0].ident == "core" || segments[0].ident == "std")
+                    && segments[1].ident == "option"
+                    && segments[2].ident == "Option");
+            if is_option {
+                let segment = segments.last().unwrap();
+                if let PathArguments::AngleBracketed(args) = &segment.arguments {
+                    if let Some(GenericArgument::Type(option_ty)) = args.args.first() {
+                        let ty = Type::try_from(option_ty)?;
+                        return Ok(Self {
+                            ty: value.clone(),
+                            argument: Box::new(ty),
+                        });
+                    }
+                }
+            }
+        }
+
+        Err(syn::Error::new_spanned(value, "unsupported type"))
+    }
+}
+
 impl TryFrom<&syn::Type> for Type {
     type Error = syn::Error;
 
@@ -438,6 +470,7 @@ impl TryFrom<&syn::Type> for Type {
                 .map(Type::Native)
                 .or_else(|_| TypeBuffer::try_from(ty).map(Type::Buffer))
                 .or_else(|_| TypeString::try_from(ty).map(Type::String))
+                .or_else(|_| TypeOption::try_from(ty).map(Type::Option))
                 .unwrap_or_else(|_| Type::Struct(ty.clone())),
             syn::Type::Reference(ty) => TypeBuffer::try_from(ty)
                 .map(Type::Buffer)

@@ -17,4 +17,8 @@ mod deno {
     pub fn concat(a: &str, b: &str) -> String {
         format!("{}{}", a, b)
     }
+
+    pub fn sqrt(x: f32) -> Option<f32> {
+        (x > 0.0).then(|| x.sqrt())
+    }
 }

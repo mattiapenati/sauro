@@ -117,7 +117,11 @@ fn expand_function(
     let mut utilities = Utilities::default();
 
     // signature
-    write!(out, "export function {}(", sig.ident)?;
+    if non_blocking {
+        write!(out, "export async function {}(", sig.ident)?;
+    } else {
+        write!(out, "export function {}(", sig.ident)?;
+    }
     for (index, input) in sig.inputs.iter().enumerate() {
         if index > 0 {
             write!(out, ", ")?;
@@ -165,7 +169,7 @@ fn expand_function(
                 )?;
                 utilities.string_encode = true;
             }
-            syntax::Type::Struct(_) => {
+            syntax::Type::Struct(_) | syntax::Type::Option(_) => {
                 writeln!(
                     out,
                     "  const __arg{}_ptr = __structEncode({});",
@@ -224,7 +228,7 @@ fn expand_function(
                 utilities.string_decode = true;
                 utilities.len_prefixed_buffer = true;
             }
-            syntax::Type::Struct(_) => {
+            syntax::Type::Struct(_) | syntax::Type::Option(_) => {
                 if non_blocking {
                     writeln!(
                         out,
@@ -263,6 +267,15 @@ fn expand_type(out: &mut impl std::fmt::Write, ty: &syntax::Type) -> std::fmt::R
         },
         syntax::Type::Buffer(_) => write!(out, "Uint8Array"),
         syntax::Type::String(_) => write!(out, "string"),
+        syntax::Type::Option(option) => {
+            let argument = &*option.argument;
+            expand_type(out, argument)?;
+            // this avoid multiple null if recursive option structure is used
+            if !matches!(argument, syntax::Type::Option(_)) {
+                write!(out, " | null")?;
+            }
+            Ok(())
+        }
         syntax::Type::Struct(path) => {
             let ty = path.path.segments.first().unwrap();
             write!(out, "{}", ty.ident)
@@ -286,9 +299,10 @@ fn symbol_type(ty: &syntax::Type) -> &'static str {
             syntax::TypeNative::F32(_) => "f32",
             syntax::TypeNative::F64(_) => "f64",
         },
-        syntax::Type::Buffer(_) | syntax::Type::String(_) | syntax::Type::Struct(_) => {
-            "buffer\", \"usize"
-        }
+        syntax::Type::Buffer(_)
+        | syntax::Type::String(_)
+        | syntax::Type::Option(_)
+        | syntax::Type::Struct(_) => "buffer\", \"usize",
     }
 }
 
@@ -308,7 +322,10 @@ fn symbol_return_type(ty: &syntax::Type) -> &'static str {
             syntax::TypeNative::F32(_) => "f32",
             syntax::TypeNative::F64(_) => "f64",
         },
-        syntax::Type::Buffer(_) | syntax::Type::String(_) | syntax::Type::Struct(_) => "buffer",
+        syntax::Type::Buffer(_)
+        | syntax::Type::String(_)
+        | syntax::Type::Option(_)
+        | syntax::Type::Struct(_) => "buffer",
     }
 }
 

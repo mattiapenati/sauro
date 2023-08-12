@@ -1,6 +1,6 @@
 mod parse;
 
-use syn::{punctuated::Punctuated, token, Attribute, Block, Ident, Token, TypePath, TypeReference};
+use syn::{punctuated::Punctuated, token, Attribute, Block, Ident, Token};
 
 pub use self::parse::parse_module;
 
@@ -66,7 +66,8 @@ pub enum Type {
     Native(TypeNative),
     Buffer(TypeBuffer),
     String(TypeString),
-    Struct(TypePath),
+    Option(TypeOption),
+    Struct(syn::TypePath),
 }
 
 pub enum TypeNative {
@@ -85,11 +86,16 @@ pub enum TypeNative {
 }
 
 pub enum TypeBuffer {
-    Borrowed(TypeReference),
-    Owned(TypePath),
+    Borrowed(syn::TypeReference),
+    Owned(syn::TypePath),
 }
 
 pub enum TypeString {
-    Borrowed(TypeReference),
-    Owned(TypePath),
+    Borrowed(syn::TypeReference),
+    Owned(syn::TypePath),
+}
+
+pub struct TypeOption {
+    pub ty: syn::TypePath,
+    pub argument: Box<Type>,
 }
