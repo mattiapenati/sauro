@@ -15,6 +15,7 @@ pub fn bindgen(_args: TokenStream, input: TokenStream) -> TokenStream {
 
 #[proc_macro_attribute]
 pub fn non_blocking(_args: TokenStream, input: TokenStream) -> TokenStream {
+    // check if applied to a function
     syn::parse::<syn::ItemFn>(input)
         .map(quote::ToTokens::into_token_stream)
         .unwrap_or_else(|err| err.into_compile_error())

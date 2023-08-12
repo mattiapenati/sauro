@@ -15,7 +15,10 @@ pub fn bindgen(input: Module) -> TokenStream {
     let ident = input.ident;
 
     let span = input.brace_token.span;
-    let items = input.items.into_iter().map(expand_item);
+    let items = input
+        .items
+        .into_iter()
+        .map(quote::ToTokens::into_token_stream);
     let expanded = quote_spanned!(span => {#(#items)*});
 
     quote! {
@@ -24,76 +27,81 @@ pub fn bindgen(input: Module) -> TokenStream {
     }
 }
 
-fn expand_item(input: Item) -> TokenStream {
-    match &input {
-        Item::Fn(input) => expand_function(input),
-        Item::Struct(input) => expand_struct(input),
-    }
-}
-
-fn expand_struct(strct: &ItemStruct) -> TokenStream {
-    let attrs = strct.attrs.iter();
-    let vis = &strct.vis;
-    let struct_token = &strct.struct_token;
-    let ident = &strct.ident;
-
-    let expanded = {
-        let span = strct.brace_token.span;
-        let fields = strct.fields.iter();
-        quote_spanned!(span => {#(#fields),*})
-    };
-
-    quote! {
-        #(#attrs)*
-        #[derive(::sauro::serde::Serialize, ::sauro::serde::Deserialize)]
-        #[serde(crate = "::sauro::serde")]
-        #vis #struct_token #ident #expanded
-    }
-}
-
-fn expand_function(input: &ItemFn) -> TokenStream {
-    let vis = &input.vis;
-    let sig = {
-        let unsafety = quote!(unsafe);
-        let abi = quote!(extern "C");
-        let fn_token = &input.sig.fn_token;
-        let ident = &input.sig.ident;
-
-        let inputs = {
-            let span = input.sig.inputs.span();
-            let inputs = input.sig.inputs.iter().enumerate().map(BindingFnArg);
-            quote_spanned!(span => (#(#inputs),*))
-        };
-        let output = BindingReturnType(&input.sig.output);
-
-        quote!(#unsafety #abi #fn_token #ident #inputs #output)
-    };
-
-    let impl_fn = ImplFunction(input);
-
-    let overrides = input
-        .sig
-        .inputs
-        .iter()
-        .enumerate()
-        .map(BindingFnArgOverride);
-
-    let inputs_ident = input.sig.inputs.iter().map(|arg| &arg.ident);
-
-    let return_fn = BindingReturnStmt(&input.sig.output);
-
-    quote! {
-        #[no_mangle]
-        #vis #sig {
-            #impl_fn
-            #(#overrides)*
-            let __inner_res = __inner_impl(#(#inputs_ident),*);
-            #return_fn(__inner_res)
+impl quote::ToTokens for Item {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        match &self {
+            Item::Fn(input) => input.to_tokens(tokens),
+            Item::Struct(input) => input.to_tokens(tokens),
         }
     }
 }
 
-impl ToTokens for Field {
+impl quote::ToTokens for ItemStruct {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let attrs = self.attrs.iter();
+        let vis = &self.vis;
+        let struct_token = &self.struct_token;
+        let ident = &self.ident;
+
+        let expanded = {
+            let span = self.brace_token.span;
+            let fields = self.fields.iter();
+            quote_spanned!(span => {#(#fields),*})
+        };
+
+        tokens.extend(quote! {
+            #(#attrs)*
+            #[derive(::sauro::serde::Serialize, ::sauro::serde::Deserialize)]
+            #[serde(crate = "::sauro::serde")]
+            #vis #struct_token #ident #expanded
+        })
+    }
+}
+
+impl quote::ToTokens for ItemFn {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let vis = &self.vis;
+        let sig = {
+            let fn_token = {
+                let span = self.sig.fn_token.span();
+                let unsafety = quote!(unsafe);
+                let abi = quote!(extern "C");
+                let fn_token = &self.sig.fn_token;
+                quote_spanned!(span => #unsafety #abi #fn_token)
+            };
+            let ident = &self.sig.ident;
+
+            let inputs = {
+                let span = self.sig.paren_token.span;
+                let inputs = self.sig.inputs.iter().enumerate().map(BindingFnArg);
+                quote_spanned!(span => (#(#inputs),*))
+            };
+            let output = BindingReturnType(&self.sig.output);
+
+            quote!(#fn_token #ident #inputs #output)
+        };
+
+        let fn_inner_impl = FnInnerImpl(self);
+
+        let overrides = self.sig.inputs.iter().enumerate().map(BindingFnArgOverride);
+
+        let inputs_ident = self.sig.inputs.iter().map(|arg| &arg.ident);
+
+        let return_fn = BindingReturnStmt(&self.sig.output);
+
+        tokens.extend(quote! {
+            #[no_mangle]
+            #vis #sig {
+                #fn_inner_impl
+                #(#overrides)*
+                let __inner_res = __inner_impl(#(#inputs_ident),*);
+                #return_fn(__inner_res)
+            }
+        })
+    }
+}
+
+impl quote::ToTokens for Field {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let attrs = self.attrs.iter();
         let vis = &self.vis;
@@ -108,9 +116,9 @@ impl ToTokens for Field {
     }
 }
 
-struct ImplFunction<'a>(&'a ItemFn);
+struct FnInnerImpl<'a>(&'a ItemFn);
 
-impl<'a> ToTokens for ImplFunction<'a> {
+impl<'a> ToTokens for FnInnerImpl<'a> {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let input = self.0;
 
@@ -266,7 +274,7 @@ impl<'a> ToTokens for BindingFnArgOverride<'a> {
     }
 }
 
-impl ToTokens for Type {
+impl quote::ToTokens for Type {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         match self {
             Self::Native(ty) => ty.to_tokens(tokens),
@@ -277,7 +285,7 @@ impl ToTokens for Type {
     }
 }
 
-impl ToTokens for TypeNative {
+impl quote::ToTokens for TypeNative {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         match self {
             Self::I8(ident)
@@ -296,7 +304,7 @@ impl ToTokens for TypeNative {
     }
 }
 
-impl ToTokens for TypeBuffer {
+impl quote::ToTokens for TypeBuffer {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         match self {
             Self::Owned(ty) => ty.to_tokens(tokens),
@@ -305,7 +313,7 @@ impl ToTokens for TypeBuffer {
     }
 }
 
-impl ToTokens for TypeString {
+impl quote::ToTokens for TypeString {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         match self {
             Self::Owned(ty) => ty.to_tokens(tokens),
@@ -314,7 +322,7 @@ impl ToTokens for TypeString {
     }
 }
 
-impl ToTokens for ReturnType {
+impl quote::ToTokens for ReturnType {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         if let Self::Type(rarrow, ty) = self {
             tokens.extend(quote!(#rarrow #ty))
