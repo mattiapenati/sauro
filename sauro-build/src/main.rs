@@ -2,12 +2,14 @@ mod cmd;
 mod expand;
 mod syntax;
 
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-fn main() -> anyhow::Result<()> {
+fn main() -> Result<()> {
     let args = Args::parse();
     match args.command {
         Command::Build(cmd) => cmd.run(),
+        Command::New(cmd) => cmd.run(),
     }
 }
 
@@ -27,4 +29,5 @@ struct Args {
 #[derive(Subcommand)]
 enum Command {
     Build(cmd::BuildCommand),
+    New(cmd::NewCommand),
 }

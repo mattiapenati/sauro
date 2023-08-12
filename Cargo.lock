@@ -2126,6 +2126,7 @@ dependencies = [
  "clap",
  "proc-macro2",
  "syn 2.0.28",
+ "toml_edit",
 ]
 
 [[package]]
