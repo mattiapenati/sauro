@@ -1715,15 +1715,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "minijinja"
-version = "1.0.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e436cdb19900a08197c6b874280d24f9289d127275eadc23623276e0f5ec97e9"
-dependencies = [
- "serde",
-]
-
-[[package]]
 name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2133,9 +2124,7 @@ dependencies = [
  "camino",
  "cargo",
  "clap",
- "minijinja",
  "proc-macro2",
- "serde",
  "syn 2.0.28",
 ]
 
