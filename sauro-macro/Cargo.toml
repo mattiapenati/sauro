@@ -2,6 +2,7 @@
 name = "sauro-macro"
 version = "0.1.0"
 description = "Macros implementation of sauro::bindgen"
+readme = "../README.md"
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
