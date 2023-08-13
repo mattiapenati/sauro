@@ -62,40 +62,24 @@ pub enum ReturnType {
     Type(Token![->], Type),
 }
 
-pub enum Type {
-    Native(TypeNative),
-    Buffer(TypeBuffer),
-    String(TypeString),
-    Option(TypeOption),
-    Struct(syn::TypePath),
+pub struct Type {
+    /// Type of function arguments
+    pub ty: Box<syn::Type>,
+    pub kind: TypeKind,
 }
 
-pub enum TypeNative {
-    I8(Ident),
-    I16(Ident),
-    I32(Ident),
-    I64(Ident),
-    ISize(Ident),
-    U8(Ident),
-    U16(Ident),
-    U32(Ident),
-    U64(Ident),
-    USize(Ident),
-    F32(Ident),
-    F64(Ident),
+pub enum TypeKind {
+    BufferBorrowed,
+    BufferBorrowedMut,
+    BufferOwned,
+    Json,
+    Native,
+    StringBorrowed,
+    StringOwned,
 }
 
-pub enum TypeBuffer {
-    Borrowed(syn::TypeReference),
-    Owned(syn::TypePath),
-}
-
-pub enum TypeString {
-    Borrowed(syn::TypeReference),
-    Owned(syn::TypePath),
-}
-
-pub struct TypeOption {
-    pub ty: syn::TypePath,
-    pub argument: Box<Type>,
+impl TypeKind {
+    pub fn is_native(&self) -> bool {
+        matches!(self, Self::Native)
+    }
 }

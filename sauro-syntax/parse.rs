@@ -1,12 +1,8 @@
 use proc_macro2::Span;
-use syn::{
-    punctuated::Punctuated, spanned::Spanned, GenericArgument, Pat, PathArguments, Token,
-    Visibility,
-};
+use syn::{punctuated::Punctuated, spanned::Spanned, Pat, Token, Visibility};
 
 use super::{
-    Field, FnArg, Item, ItemFn, ItemStruct, Module, ReturnType, Signature, Type, TypeBuffer,
-    TypeNative, TypeOption, TypeString,
+    Field, FnArg, Item, ItemFn, ItemStruct, Module, ReturnType, Signature, Type, TypeKind,
 };
 
 pub fn parse_module(input: syn::ItemMod) -> syn::Result<Module> {
@@ -242,222 +238,10 @@ impl TryFrom<syn::ReturnType> for ReturnType {
         let syn::ReturnType::Type(rarrow, ref ty) = value else {
             return Ok(ReturnType::Default)
         };
+
         let ty = Type::try_from(ty.as_ref())?;
-        let return_type = match ty {
-            Type::Native(_)
-            | Type::String(TypeString::Owned(_))
-            | Type::Buffer(TypeBuffer::Owned(_))
-            | Type::Option(_)
-            | Type::Struct(_) => ReturnType::Type(rarrow, ty),
-            _ => return Err(syn::Error::new_spanned(value, "unsupported return type")),
-        };
+        let return_type = ReturnType::Type(rarrow, ty);
         Ok(return_type)
-    }
-}
-
-impl TryFrom<&syn::TypePath> for TypeNative {
-    type Error = syn::Error;
-
-    fn try_from(value: &syn::TypePath) -> syn::Result<Self> {
-        let path = &value.path;
-        if value.qself.is_some() || path.leading_colon.is_some() || path.segments.len() != 1 {
-            return Err(syn::Error::new_spanned(value, "unsupported type"));
-        }
-
-        let ident = path.segments[0].ident.clone();
-        let res = match ident.to_string().as_str() {
-            "i8" => Self::I8(ident),
-            "i16" => Self::I16(ident),
-            "i32" => Self::I32(ident),
-            "i64" => Self::I64(ident),
-            "isize" => Self::ISize(ident),
-            "u8" => Self::U8(ident),
-            "u16" => Self::U16(ident),
-            "u32" => Self::U32(ident),
-            "u64" => Self::U64(ident),
-            "usize" => Self::USize(ident),
-            "f32" => Self::F32(ident),
-            "f64" => Self::F64(ident),
-            _ => return Err(syn::Error::new_spanned(value, "unsupported type")),
-        };
-
-        Ok(res)
-    }
-}
-
-impl TryFrom<&syn::TypePath> for TypeBuffer {
-    type Error = syn::Error;
-
-    fn try_from(value: &syn::TypePath) -> syn::Result<Self> {
-        if value.qself.is_none() {
-            let path = &value.path;
-            let segments = &path.segments;
-
-            let is_box = (segments.len() == 1 && segments[0].ident == "Box")
-                || (segments.len() == 3
-                    && (segments[0].ident == "alloc" || segments[0].ident == "std")
-                    && segments[1].ident == "boxed"
-                    && segments[2].ident == "Box");
-            if is_box {
-                let segment = segments.last().unwrap();
-                if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                    if let Some(GenericArgument::Type(syn::Type::Slice(box_ty))) = args.args.first()
-                    {
-                        if let syn::Type::Path(elem_ty) = &*box_ty.elem {
-                            if let Some(segment) = elem_ty.path.segments.first() {
-                                if segment.ident == "u8" {
-                                    return Ok(Self::Owned(value.clone()));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            let is_vec = (segments.len() == 1 && segments[0].ident == "Vec")
-                || (segments.len() == 3
-                    && (segments[0].ident == "alloc" || segments[0].ident == "std")
-                    && segments[1].ident == "vec"
-                    && segments[2].ident == "Vec");
-            if is_vec {
-                let segment = segments.last().unwrap();
-                if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                    if let Some(GenericArgument::Type(syn::Type::Path(vec_ty))) = args.args.first()
-                    {
-                        if let Some(segment) = vec_ty.path.segments.first() {
-                            let ident = &segment.ident;
-
-                            if *ident == "u8" {
-                                return Ok(Self::Owned(value.clone()));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Err(syn::Error::new_spanned(value, "unsupported type"))
-    }
-}
-
-impl TryFrom<&syn::TypeReference> for TypeBuffer {
-    type Error = syn::Error;
-
-    fn try_from(value: &syn::TypeReference) -> syn::Result<Self> {
-        if value.lifetime.is_none() {
-            if let syn::Type::Slice(ty) = value.elem.as_ref() {
-                if let syn::Type::Path(ty) = ty.elem.as_ref() {
-                    let path = &ty.path;
-                    if ty.qself.is_none()
-                        && path.leading_colon.is_none()
-                        && path.segments.len() == 1
-                    {
-                        let segment = &path.segments[0];
-                        let ident = &segment.ident;
-                        if segment.arguments.is_none() && ident == "u8" {
-                            return Ok(TypeBuffer::Borrowed(value.clone()));
-                        }
-                    }
-                }
-            }
-        }
-
-        Err(syn::Error::new_spanned(value, "unsupported type"))
-    }
-}
-
-impl TryFrom<&syn::TypePath> for TypeString {
-    type Error = syn::Error;
-
-    fn try_from(value: &syn::TypePath) -> syn::Result<Self> {
-        if value.qself.is_none() {
-            let path = &value.path;
-            let segments = &path.segments;
-
-            let is_box = (segments.len() == 1 && segments[0].ident == "Box")
-                || (segments.len() == 3
-                    && (segments[0].ident == "alloc" || segments[0].ident == "std")
-                    && segments[1].ident == "boxed"
-                    && segments[2].ident == "Box");
-            if is_box {
-                let segment = segments.last().unwrap();
-                if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                    if let Some(GenericArgument::Type(syn::Type::Path(box_ty))) = args.args.first()
-                    {
-                        let segments = &box_ty.path.segments;
-                        if box_ty.qself.is_none()
-                            && segments.len() == 1
-                            && segments[0].ident == "str"
-                        {
-                            return Ok(Self::Owned(value.clone()));
-                        }
-                    }
-                }
-            }
-
-            let is_string = (segments.len() == 1 && segments[0].ident == "String")
-                || (segments.len() == 3
-                    && (segments[0].ident == "alloc" || segments[0].ident == "std")
-                    && segments[1].ident == "string"
-                    && segments[2].ident == "String");
-            if is_string {
-                return Ok(Self::Owned(value.clone()));
-            }
-        }
-
-        Err(syn::Error::new_spanned(value, "unsupported type"))
-    }
-}
-
-impl TryFrom<&syn::TypeReference> for TypeString {
-    type Error = syn::Error;
-
-    fn try_from(value: &syn::TypeReference) -> syn::Result<Self> {
-        if value.lifetime.is_none() {
-            if let syn::Type::Path(ty) = value.elem.as_ref() {
-                let path = &ty.path;
-                if ty.qself.is_none() && path.leading_colon.is_none() && path.segments.len() == 1 {
-                    let segment = &path.segments[0];
-                    let ident = &segment.ident;
-                    if segment.arguments.is_none() && ident == "str" {
-                        return Ok(TypeString::Borrowed(value.clone()));
-                    }
-                }
-            }
-        }
-
-        Err(syn::Error::new_spanned(value, "unsupported type"))
-    }
-}
-
-impl TryFrom<&syn::TypePath> for TypeOption {
-    type Error = syn::Error;
-
-    fn try_from(value: &syn::TypePath) -> syn::Result<Self> {
-        if value.qself.is_none() {
-            let path = &value.path;
-            let segments = &path.segments;
-
-            let is_option = (segments.len() == 1 && segments[0].ident == "Option")
-                || (segments.len() == 3
-                    && (segments[0].ident == "core" || segments[0].ident == "std")
-                    && segments[1].ident == "option"
-                    && segments[2].ident == "Option");
-            if is_option {
-                let segment = segments.last().unwrap();
-                if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                    if let Some(GenericArgument::Type(option_ty)) = args.args.first() {
-                        let ty = Type::try_from(option_ty)?;
-                        return Ok(Self {
-                            ty: value.clone(),
-                            argument: Box::new(ty),
-                        });
-                    }
-                }
-            }
-        }
-
-        Err(syn::Error::new_spanned(value, "unsupported type"))
     }
 }
 
@@ -465,20 +249,206 @@ impl TryFrom<&syn::Type> for Type {
     type Error = syn::Error;
 
     fn try_from(value: &syn::Type) -> syn::Result<Self> {
-        let res = match value {
-            syn::Type::Path(ty) => TypeNative::try_from(ty)
-                .map(Type::Native)
-                .or_else(|_| TypeBuffer::try_from(ty).map(Type::Buffer))
-                .or_else(|_| TypeString::try_from(ty).map(Type::String))
-                .or_else(|_| TypeOption::try_from(ty).map(Type::Option))
-                .unwrap_or_else(|_| Type::Struct(ty.clone())),
-            syn::Type::Reference(ty) => TypeBuffer::try_from(ty)
-                .map(Type::Buffer)
-                .or_else(|_| TypeString::try_from(ty).map(Type::String))?,
-            _ => return Err(syn::Error::new_spanned(value, "unsupported type")),
-        };
-        Ok(res)
+        match value {
+            syn::Type::Path(ty) => parse_type_path(ty),
+            syn::Type::Reference(ty) => parse_type_reference(ty),
+            _ => Err(syn::Error::new_spanned(value, "unsupported type")),
+        }
     }
+}
+
+fn parse_type_path(value: &syn::TypePath) -> syn::Result<Type> {
+    let segments = &value.path.segments;
+
+    if value.qself.is_none() && segments.len() == 1 {
+        let ty = Box::new(syn::Type::Path(value.clone()));
+
+        let segment = &segments[0];
+        let kind = match segment.ident.to_string().as_str() {
+            // native types
+            "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64" | "usize"
+            | "f32" | "f64" => TypeKind::Native,
+            "Box" => pointer_kind(segment)?,
+            "Option" => option_kind(segment)?,
+            "Result" => result_kind(segment)?,
+            "String" => TypeKind::StringOwned,
+            "Vec" => vector_kind(segment)?,
+            _ => TypeKind::Json,
+        };
+
+        return Ok(Type { ty, kind });
+    }
+
+    // fully qualified types
+    if value.qself.is_none() && segments.len() == 3 {
+        let ty = Box::new(syn::Type::Path(value.clone()));
+
+        let segment = &segments[2];
+        if (segments[0].ident == "std" || segments[0].ident == "alloc")
+            && segments[1].ident == "box"
+            && segment.ident == "Box"
+        {
+            let kind = pointer_kind(segment)?;
+            return Ok(Type { ty, kind });
+        } else if (segments[0].ident == "std" || segments[0].ident == "core")
+            && segments[1].ident == "option"
+            && segment.ident == "Option"
+        {
+            let kind = option_kind(segment)?;
+            return Ok(Type { ty, kind });
+        } else if (segments[0].ident == "std" || segments[0].ident == "core")
+            && segments[1].ident == "result"
+            && segment.ident == "Result"
+        {
+            let kind = result_kind(segment)?;
+            return Ok(Type { ty, kind });
+        } else if (segments[0].ident == "std" || segments[0].ident == "alloc")
+            && segments[1].ident == "vec"
+            && segment.ident == "Vec"
+        {
+            let kind = vector_kind(segment)?;
+            return Ok(Type { ty, kind });
+        }
+    }
+
+    Err(syn::Error::new_spanned(value, "unsupported type"))
+}
+
+fn parse_type_reference(input: &syn::TypeReference) -> syn::Result<Type> {
+    let elem = &*input.elem;
+    match elem {
+        syn::Type::Path(ty) => {
+            let path = &ty.path;
+            let segments = &path.segments;
+            if ty.qself.is_none() && path.leading_colon.is_none() && segments.len() == 1 {
+                let segment = &segments[0];
+                // &str (not &mut str)
+                if segment.ident == "str"
+                    && segment.arguments.is_none()
+                    && input.mutability.is_none()
+                {
+                    let ty = Box::new(syn::Type::Reference(input.clone()));
+                    let kind = TypeKind::StringBorrowed;
+                    return Ok(Type { ty, kind });
+                }
+            }
+        }
+        syn::Type::Array(ty) => {
+            if let syn::Type::Path(elem) = &*ty.elem {
+                let segments = &elem.path.segments;
+                // &[u8] and &mut [u8]
+                if elem.qself.is_none() && segments.len() == 1 && segments[0].ident == "u8" {
+                    let ty = Box::new(syn::Type::Reference(input.clone()));
+                    let kind = if input.mutability.is_none() {
+                        TypeKind::BufferBorrowed
+                    } else {
+                        TypeKind::BufferBorrowedMut
+                    };
+                    return Ok(Type { ty, kind });
+                }
+            }
+        }
+        _ => {}
+    }
+
+    Err(syn::Error::new_spanned(input, "unsupported type"))
+}
+
+fn pointer_kind(value: &syn::PathSegment) -> syn::Result<TypeKind> {
+    assert!(value.ident == "Box");
+
+    let arguments = &value.arguments;
+    if let syn::PathArguments::AngleBracketed(arguments) = arguments {
+        let args = &arguments.args;
+        if args.len() == 1 {
+            match &args[0] {
+                // Box<str>
+                syn::GenericArgument::Type(syn::Type::Path(ty)) => {
+                    let segments = &ty.path.segments;
+                    if ty.qself.is_none() && segments.len() == 1 && segments[0].ident == "str" {
+                        return Ok(TypeKind::StringOwned);
+                    }
+                }
+                // Box<[u8]>
+                syn::GenericArgument::Type(syn::Type::Array(ty)) => {
+                    if let syn::Type::Path(elem) = &*ty.elem {
+                        let segments = &elem.path.segments;
+                        if elem.qself.is_none() && segments.len() == 1 && segments[0].ident == "u8"
+                        {
+                            return Ok(TypeKind::BufferOwned);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    Err(syn::Error::new_spanned(value, "unsupported type"))
+}
+
+fn option_kind(value: &syn::PathSegment) -> syn::Result<TypeKind> {
+    assert!(value.ident == "Option");
+
+    let arguments = &value.arguments;
+    if let syn::PathArguments::AngleBracketed(arguments) = arguments {
+        let args = &arguments.args;
+        if args.len() == 1 {
+            // Option<T> (where T is a valid type)
+            if let syn::GenericArgument::Type(syn::Type::Path(ty)) = &args[0] {
+                if parse_type_path(ty).is_ok() {
+                    return Ok(TypeKind::Json);
+                }
+            }
+        }
+    }
+    Err(syn::Error::new_spanned(value, "unsupported type"))
+}
+
+fn result_kind(value: &syn::PathSegment) -> syn::Result<TypeKind> {
+    assert!(value.ident == "Result");
+
+    let arguments = &value.arguments;
+    if let syn::PathArguments::AngleBracketed(arguments) = arguments {
+        let args = &arguments.args;
+        if args.len() == 2 {
+            // Result<T, E> (where both T and E are a valid types)
+            let ok_is_valid_type = matches!(
+                &args[0],
+                syn::GenericArgument::Type(syn::Type::Path(ty)) if parse_type_path(ty).is_ok(),
+            );
+            let err_is_valid_type = matches!(
+                &args[0],
+                syn::GenericArgument::Type(syn::Type::Path(ty)) if parse_type_path(ty).is_ok(),
+            );
+            if ok_is_valid_type && err_is_valid_type {
+                return Ok(TypeKind::Json);
+            }
+        }
+    }
+    Err(syn::Error::new_spanned(value, "unsupported type"))
+}
+
+fn vector_kind(value: &syn::PathSegment) -> syn::Result<TypeKind> {
+    assert!(value.ident == "Vec");
+
+    let arguments = &value.arguments;
+    if let syn::PathArguments::AngleBracketed(arguments) = arguments {
+        let args = &arguments.args;
+        if args.len() == 1 {
+            if let syn::GenericArgument::Type(syn::Type::Path(ty)) = &args[0] {
+                let segments = &ty.path.segments;
+                // Vec<u8>
+                if ty.qself.is_none() && segments.len() == 1 && segments[0].ident == "u8" {
+                    return Ok(TypeKind::BufferOwned);
+                }
+                // Vec<T> (where T is a valid type)
+                else if parse_type_path(ty).is_ok() {
+                    return Ok(TypeKind::Json);
+                }
+            }
+        }
+    }
+    Err(syn::Error::new_spanned(value, "unsupported type"))
 }
 
 fn visibility_pub(vis: &Visibility, span: Span) -> Token![pub] {
