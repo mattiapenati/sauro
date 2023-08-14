@@ -72,9 +72,9 @@ pub struct Type {
 }
 
 pub enum TypeKind {
-    BufferBorrowed,
-    BufferBorrowedMut,
-    BufferOwned,
+    BufferBorrowed(TypeNative),
+    BufferBorrowedMut(TypeNative),
+    BufferOwned(TypeNative),
     Json,
     Native(TypeNative),
     StringBorrowed,

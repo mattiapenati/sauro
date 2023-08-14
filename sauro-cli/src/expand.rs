@@ -147,9 +147,9 @@ fn expand_function(
             syntax::TypeKind::Native(_) => {
                 writeln!(out, "  const __arg{} = {};", index, input.ident)?;
             }
-            syntax::TypeKind::BufferBorrowed
-            | syntax::TypeKind::BufferBorrowedMut
-            | syntax::TypeKind::BufferOwned => {
+            syntax::TypeKind::BufferBorrowed(_)
+            | syntax::TypeKind::BufferBorrowedMut(_)
+            | syntax::TypeKind::BufferOwned(_) => {
                 writeln!(out, "  const __arg{}_ptr = {};", index, input.ident)?;
                 writeln!(
                     out,
@@ -209,10 +209,14 @@ fn expand_function(
             syntax::TypeKind::Native(_) => {
                 writeln!(out, "  return __inner_res")?;
             }
-            syntax::TypeKind::BufferBorrowed
-            | syntax::TypeKind::BufferBorrowedMut
-            | syntax::TypeKind::BufferOwned => {
-                writeln!(out, "  return __lenPrefixedBuffer(__inner_res);")?;
+            syntax::TypeKind::BufferBorrowed(_)
+            | syntax::TypeKind::BufferBorrowedMut(_)
+            | syntax::TypeKind::BufferOwned(_) => {
+                writeln!(
+                    out,
+                    "  return new {}(__lenPrefixedBuffer(__inner_res));",
+                    ty.ts
+                )?;
                 utilities.len_prefixed_buffer = true;
             }
             syntax::TypeKind::StringBorrowed | syntax::TypeKind::StringOwned => {
@@ -268,22 +272,22 @@ struct Utilities {
     struct_decode: bool,
     len_prefixed_buffer: bool,
 }
-const STRING_ENCODE: &str = r#"function __stringEncode(s: string): Uint8Array {
+const STRING_ENCODE: &str = r#"function __stringEncode(s: string): ArrayBuffer {
   return new TextEncoder().encode(s);
 }
 "#;
 
-const STRING_DECODE: &str = r#"function __stringDecode(a: Uint8Array): string {
+const STRING_DECODE: &str = r#"function __stringDecode(a: ArrayBuffer): string {
   return new TextDecoder().decode(a)
 }
 "#;
 
-const STRUCT_ENCODE: &str = r#"function __structEncode(v): Uint8Array {
+const STRUCT_ENCODE: &str = r#"function __structEncode(v: unknown): ArrayBuffer {
   return __stringEncode(JSON.stringify(v));
 }
 "#;
 
-const STRUCT_DECODE: &str = r#"function __structDecode(v: Uint8Array, isResult = false) {
+const STRUCT_DECODE: &str = r#"function __structDecode(v: ArrayBuffer, isResult = false) {
   if (isResult) {
     const obj: { Ok?: unknown, Err?: unknown } = JSON.parse(__stringDecode(v));
     if (obj.Err !== undefined) {
@@ -297,7 +301,11 @@ const STRUCT_DECODE: &str = r#"function __structDecode(v: Uint8Array, isResult =
 }
 "#;
 
-const LEN_PREFIXED_BUFFER: &str = r#"function __lenPrefixedBuffer(v): Uint8Array {
+const LEN_PREFIXED_BUFFER: &str = r#"function __lenPrefixedBuffer(v: Deno.PointerValue): ArrayBuffer {
+  if (v === null) {
+    throw new Deno.errors.InvalidData("unexpected null pointer");
+  }
+
   const unsafeView = new Deno.UnsafePointerView(v);
 
   const lenBigEndian = new Uint8Array(4);
@@ -305,7 +313,7 @@ const LEN_PREFIXED_BUFFER: &str = r#"function __lenPrefixedBuffer(v): Uint8Array
   unsafeView.copyInto(lenBigEndian, 0);
   const len = lenBigEndianView.getInt32(0);
 
-  const buffer = new Uint8Array(len);
+  const buffer = new ArrayBuffer(len);
   unsafeView.copyInto(buffer, 4);
 
   return buffer;

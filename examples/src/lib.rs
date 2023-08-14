@@ -27,4 +27,13 @@ mod deno {
             .then(|| x.sqrt())
             .ok_or_else(|| format!("'{}' is a negative number", x))
     }
+
+    pub fn saxpy(a: f32, x: &[f32], y: &[f32]) -> Box<[f32]> {
+        assert_eq!(x.len(), y.len());
+
+        let x = x.iter();
+        let y = y.iter();
+
+        x.zip(y).map(|(x, y)| a * x + y).collect()
+    }
 }

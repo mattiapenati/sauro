@@ -2,7 +2,9 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote, quote_spanned, ToTokens};
 use syn::spanned::Spanned;
 
-use crate::syntax::{Field, FnArg, Item, ItemFn, ItemStruct, Module, ReturnType, Type, TypeKind};
+use crate::syntax::{
+    Field, FnArg, Item, ItemFn, ItemStruct, Module, ReturnType, Type, TypeKind, TypeNative,
+};
 
 pub fn bindgen(input: Module) -> TokenStream {
     let attrs = input.attrs;
@@ -197,27 +199,37 @@ impl<'a> ToTokens for BindingFnArgOverride<'a> {
 
         let expand = match input.ty.kind {
             TypeKind::Native(_) => quote_spanned!(span => let #ident = #ident_arg;),
-            TypeKind::BufferBorrowed => {
+            TypeKind::BufferBorrowed(elem) => {
                 quote_spanned! {span =>
-                    let #ident = unsafe {
-                        ::std::slice::from_raw_parts(#ident_ptr, #ident_len)
+                    let #ident: #ty = unsafe {
+                        ::std::slice::from_raw_parts(
+                            #ident_ptr as *const #elem,
+                            #ident_len / ::std::mem::size_of::<#elem>(),
+                        )
                     };
                 }
             }
-            TypeKind::BufferBorrowedMut => {
+            TypeKind::BufferBorrowedMut(elem) => {
                 quote_spanned! {span =>
-                    let mut #ident = unsafe {
-                        ::std::slice::from_raw_parts_mut(#ident_ptr, #ident_len)
+                    let mut #ident: #ty = unsafe {
+                        ::std::slice::from_raw_parts_mut(
+                            #ident_ptr as *mut #elem,
+                            #ident_len / ::std::mem::size_of::<#elem>(),
+                        )
                     };
                 }
             }
-            TypeKind::BufferOwned => {
+            TypeKind::BufferOwned(elem) => {
                 quote_spanned! {span =>
                     let mut #ident: #ty = {
-                        let buf = unsafe {
-                            ::std::slice::from_raw_parts_mut(#ident_ptr, #ident_len)
-                        };
-                        buf.to_owned().into()
+                        unsafe {
+                            ::std::slice::from_raw_parts(
+                                #ident_ptr as *const #elem,
+                                #ident_len / ::std::mem::size_of::<#elem>(),
+                            )
+                        }
+                        .to_owned()
+                        .into()
                     };
                 }
             }
@@ -300,13 +312,20 @@ impl<'a> ToTokens for BindingReturnStmt<'a> {
 
         let expand = match ty.kind {
             TypeKind::Native(_) => quote!(__inner_res),
-            TypeKind::BufferBorrowed | TypeKind::BufferBorrowedMut | TypeKind::BufferOwned => {
+            TypeKind::BufferBorrowed(elem)
+            | TypeKind::BufferBorrowedMut(elem)
+            | TypeKind::BufferOwned(elem) => {
                 quote! {{
                     let x: #ty = __inner_res;
-                    let encoded_length = (x.len() as u32).to_be_bytes();
+                    let encoded_length = ((x.len() * std::mem::size_of::<#elem>()) as u32).to_be_bytes();
 
                     let mut buffer = encoded_length.to_vec();
-                    buffer.extend(x);
+                    buffer.extend_from_slice(unsafe {
+                        ::std::slice::from_raw_parts(
+                            x.as_ptr() as *const u8,
+                            x.len() * ::std::mem::size_of::<#elem>(),
+                        )
+                    });
 
                     let ptr = buffer.as_ptr();
                     ::std::mem::forget(buffer);
@@ -346,5 +365,24 @@ impl<'a> ToTokens for BindingReturnStmt<'a> {
         };
 
         tokens.extend(expand);
+    }
+}
+
+impl ToTokens for TypeNative {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        tokens.extend(match self {
+            Self::I8 => quote!(i8),
+            Self::I16 => quote!(i16),
+            Self::I32 => quote!(i32),
+            Self::I64 => quote!(i64),
+            Self::U8 => quote!(u8),
+            Self::U16 => quote!(u16),
+            Self::U32 => quote!(u32),
+            Self::U64 => quote!(u64),
+            Self::ISize => quote!(isize),
+            Self::USize => quote!(usize),
+            Self::F32 => quote!(f32),
+            Self::F64 => quote!(f64),
+        })
     }
 }

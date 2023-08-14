@@ -378,18 +378,32 @@ fn parse_type_reference(input: &syn::TypeReference) -> syn::Result<Type> {
                 }
             }
         }
-        syn::Type::Array(ty) => {
+        syn::Type::Slice(ty) => {
             if let syn::Type::Path(elem) = &*ty.elem {
                 let segments = &elem.path.segments;
-                // &[u8] and &mut [u8]
-                if elem.qself.is_none() && segments.len() == 1 && segments[0].ident == "u8" {
+                // &[xx] and &mut [xx]
+                if elem.qself.is_none() && segments.len() == 1 {
+                    let ident = segments[0].ident.to_string();
+                    let (elem_type, ts) = match ident.as_str() {
+                        "i8" => (TypeNative::I8, typescript::Int8Array),
+                        "i16" => (TypeNative::I16, typescript::Int16Array),
+                        "i32" => (TypeNative::I32, typescript::Int32Array),
+                        "i64" => (TypeNative::I64, typescript::BigInt64Array),
+                        "u8" => (TypeNative::U8, typescript::Uint8Array),
+                        "u16" => (TypeNative::U16, typescript::Uint16Array),
+                        "u32" => (TypeNative::U32, typescript::Uint32Array),
+                        "u64" => (TypeNative::U64, typescript::BigUint64Array),
+                        "f32" => (TypeNative::F32, typescript::Float32Array),
+                        "f64" => (TypeNative::F64, typescript::Float64Array),
+                        _ => return Err(syn::Error::new_spanned(input, "unsupported type")),
+                    };
+
                     let ty = Box::new(syn::Type::Reference(input.clone()));
                     let kind = if input.mutability.is_none() {
-                        TypeKind::BufferBorrowed
+                        TypeKind::BufferBorrowed(elem_type)
                     } else {
-                        TypeKind::BufferBorrowedMut
+                        TypeKind::BufferBorrowedMut(elem_type)
                     };
-                    let ts = typescript::Uint8Array;
 
                     return Ok(Type {
                         ty,
@@ -406,10 +420,10 @@ fn parse_type_reference(input: &syn::TypeReference) -> syn::Result<Type> {
     Err(syn::Error::new_spanned(input, "unsupported type"))
 }
 
-fn parse_pointer_type(value: &syn::PathSegment) -> syn::Result<(TypeKind, typescript::Type)> {
-    assert!(value.ident == "Box");
+fn parse_pointer_type(ident: &syn::PathSegment) -> syn::Result<(TypeKind, typescript::Type)> {
+    assert!(ident.ident == "Box");
 
-    let arguments = &value.arguments;
+    let arguments = &ident.arguments;
     if let syn::PathArguments::AngleBracketed(arguments) = arguments {
         let args = &arguments.args;
         if args.len() == 1 {
@@ -421,13 +435,28 @@ fn parse_pointer_type(value: &syn::PathSegment) -> syn::Result<(TypeKind, typesc
                         return Ok((TypeKind::StringOwned, typescript::string));
                     }
                 }
-                // Box<[u8]>
-                syn::GenericArgument::Type(syn::Type::Array(ty)) => {
+                // Box<[xx]>
+                syn::GenericArgument::Type(syn::Type::Slice(ty)) => {
                     if let syn::Type::Path(elem) = &*ty.elem {
                         let segments = &elem.path.segments;
-                        if elem.qself.is_none() && segments.len() == 1 && segments[0].ident == "u8"
-                        {
-                            return Ok((TypeKind::BufferOwned, typescript::Uint8Array));
+                        if elem.qself.is_none() && segments.len() == 1 {
+                            let ident = segments[0].ident.to_string();
+                            let (elem_type, ts) = match ident.as_str() {
+                                "i8" => (TypeNative::I8, typescript::Int8Array),
+                                "i16" => (TypeNative::I16, typescript::Int16Array),
+                                "i32" => (TypeNative::I32, typescript::Int32Array),
+                                "i64" => (TypeNative::I64, typescript::BigInt64Array),
+                                "u8" => (TypeNative::U8, typescript::Uint8Array),
+                                "u16" => (TypeNative::U16, typescript::Uint16Array),
+                                "u32" => (TypeNative::U32, typescript::Uint32Array),
+                                "u64" => (TypeNative::U64, typescript::BigUint64Array),
+                                "f32" => (TypeNative::I32, typescript::Float32Array),
+                                "f64" => (TypeNative::I64, typescript::Float64Array),
+                                _ => {
+                                    return Err(syn::Error::new_spanned(ident, "unsupported type"))
+                                }
+                            };
+                            return Ok((TypeKind::BufferOwned(elem_type), ts));
                         }
                     }
                 }
@@ -435,7 +464,7 @@ fn parse_pointer_type(value: &syn::PathSegment) -> syn::Result<(TypeKind, typesc
             }
         }
     }
-    Err(syn::Error::new_spanned(value, "unsupported type"))
+    Err(syn::Error::new_spanned(ident, "unsupported type"))
 }
 
 fn parse_option_type(value: &syn::PathSegment) -> syn::Result<(TypeKind, typescript::Type)> {
@@ -490,12 +519,29 @@ fn parse_vector_type(value: &syn::PathSegment) -> syn::Result<(TypeKind, typescr
             if let syn::GenericArgument::Type(syn::Type::Path(ty)) = &args[0] {
                 let segments = &ty.path.segments;
                 // Vec<u8>
-                if ty.qself.is_none() && segments.len() == 1 && segments[0].ident == "u8" {
-                    return Ok((TypeKind::BufferOwned, typescript::Uint8Array));
-                }
-                // Vec<T> (where T is a valid type)
-                else if let Ok(elem) = parse_type_path(ty) {
-                    return Ok((TypeKind::Json, elem.ts.array()));
+                if ty.qself.is_none() && segments.len() == 1 {
+                    let ident = segments[0].ident.to_string();
+                    let (elem_type, ts) = match ident.as_str() {
+                        "i8" => (TypeNative::I8, typescript::Int8Array),
+                        "i16" => (TypeNative::I16, typescript::Int16Array),
+                        "i32" => (TypeNative::I32, typescript::Int32Array),
+                        "i64" => (TypeNative::I64, typescript::BigInt64Array),
+                        "u8" => (TypeNative::U8, typescript::Uint8Array),
+                        "u16" => (TypeNative::U16, typescript::Uint16Array),
+                        "u32" => (TypeNative::U32, typescript::Uint32Array),
+                        "u64" => (TypeNative::U64, typescript::BigUint64Array),
+                        "f32" => (TypeNative::I32, typescript::Float32Array),
+                        "f64" => (TypeNative::I64, typescript::Float64Array),
+                        _ => {
+                            // Vec<T> (where T is a valid type)
+                            if let Ok(elem) = parse_type_path(ty) {
+                                return Ok((TypeKind::Json, elem.ts.array()));
+                            } else {
+                                return Err(syn::Error::new_spanned(ident, "unsupported type"));
+                            }
+                        }
+                    };
+                    return Ok((TypeKind::BufferOwned(elem_type), ts));
                 }
             }
         }

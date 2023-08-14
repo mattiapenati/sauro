@@ -1,6 +1,6 @@
 mod types;
 
-pub use self::types::*;
+pub(crate) use self::types::*;
 
 macro_rules! Type {
     [$name:ident] => {

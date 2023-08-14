@@ -103,6 +103,7 @@ macro_rules! primitive_types {
     ($($name:ident),+ $(,)?) => {
         $(
             #[allow(non_upper_case_globals)]
+            #[allow(dead_code)]
             pub const $name: Type = Type::Primitive(TypePrimitive(::std::stringify!($name)));
         )*
     }
@@ -114,5 +115,14 @@ primitive_types! {
     number,
     bigint,
     string,
+    Int8Array,
+    Int16Array,
+    Int32Array,
+    BigInt64Array,
     Uint8Array,
+    Uint16Array,
+    Uint32Array,
+    BigUint64Array,
+    Float32Array,
+    Float64Array,
 }
