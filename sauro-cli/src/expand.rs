@@ -145,7 +145,7 @@ fn expand_function(
     // transform input
     for (index, input) in sig.inputs.iter().enumerate() {
         match input.ty.kind {
-            syntax::TypeKind::Native => {
+            syntax::TypeKind::Native(_) => {
                 writeln!(out, "  const __arg{} = {};", index, input.ident)?;
             }
             syntax::TypeKind::BufferBorrowed
@@ -198,7 +198,7 @@ fn expand_function(
             write!(out, ", ")?;
         }
         match input.ty.kind {
-            syntax::TypeKind::Native => write!(out, "__arg{}", index)?,
+            syntax::TypeKind::Native(_) => write!(out, "__arg{}", index)?,
             _ => write!(out, "__arg{0}_ptr, __arg{0}_len", index)?,
         }
     }
@@ -207,7 +207,7 @@ fn expand_function(
     // transform result
     if let syntax::ReturnType::Type(_, ty) = &sig.output {
         match ty.kind {
-            syntax::TypeKind::Native => {
+            syntax::TypeKind::Native(_) => {
                 writeln!(out, "  return __res")?;
             }
             syntax::TypeKind::BufferBorrowed
@@ -254,82 +254,20 @@ fn expand_function(
 }
 
 fn expand_type(out: &mut impl std::fmt::Write, ty: &syntax::Type) -> std::fmt::Result {
-    match ty {
-        syntax::Type::Native(ty) => match ty {
-            syntax::TypeNative::I8(_)
-            | syntax::TypeNative::I16(_)
-            | syntax::TypeNative::I32(_)
-            | syntax::TypeNative::U8(_)
-            | syntax::TypeNative::U16(_)
-            | syntax::TypeNative::U32(_) => write!(out, "number"),
-            syntax::TypeNative::I64(_)
-            | syntax::TypeNative::ISize(_)
-            | syntax::TypeNative::U64(_)
-            | syntax::TypeNative::USize(_)
-            | syntax::TypeNative::F32(_)
-            | syntax::TypeNative::F64(_) => write!(out, "number | bigint"),
-        },
-        syntax::Type::Buffer(_) => write!(out, "Uint8Array"),
-        syntax::Type::String(_) => write!(out, "string"),
-        syntax::Type::Option(option) => {
-            let argument = &*option.argument;
-            expand_type(out, argument)?;
-            // this avoid multiple null if recursive option structure is used
-            if !matches!(argument, syntax::Type::Option(_)) {
-                write!(out, " | null")?;
-            }
-            Ok(())
-        }
-        syntax::Type::Struct(path) => {
-            let ty = path.path.segments.first().unwrap();
-            write!(out, "{}", ty.ident)
-        }
-    }
+    write!(out, "{}", ty.ts)
 }
 
 fn symbol_type(ty: &syntax::Type) -> &'static str {
-    match ty {
-        syntax::Type::Native(ty) => match ty {
-            syntax::TypeNative::I8(_) => "i8",
-            syntax::TypeNative::I16(_) => "i16",
-            syntax::TypeNative::I32(_) => "i32",
-            syntax::TypeNative::I64(_) => "i64",
-            syntax::TypeNative::ISize(_) => "isize",
-            syntax::TypeNative::U8(_) => "u8",
-            syntax::TypeNative::U16(_) => "u16",
-            syntax::TypeNative::U32(_) => "u32",
-            syntax::TypeNative::U64(_) => "u64",
-            syntax::TypeNative::USize(_) => "usize",
-            syntax::TypeNative::F32(_) => "f32",
-            syntax::TypeNative::F64(_) => "f64",
-        },
-        syntax::Type::Buffer(_)
-        | syntax::Type::String(_)
-        | syntax::Type::Option(_)
-        | syntax::Type::Struct(_) => "buffer\", \"usize",
+    match ty.kind {
+        syntax::TypeKind::Native(ty) => ty.symbol(),
+        _ => r#"buffer", "usize"#,
     }
 }
 
 fn symbol_return_type(ty: &syntax::Type) -> &'static str {
-    match ty {
-        syntax::Type::Native(ty) => match ty {
-            syntax::TypeNative::I8(_) => "i8",
-            syntax::TypeNative::I16(_) => "i16",
-            syntax::TypeNative::I32(_) => "i32",
-            syntax::TypeNative::I64(_) => "i64",
-            syntax::TypeNative::ISize(_) => "isize",
-            syntax::TypeNative::U8(_) => "u8",
-            syntax::TypeNative::U16(_) => "u16",
-            syntax::TypeNative::U32(_) => "u32",
-            syntax::TypeNative::U64(_) => "u64",
-            syntax::TypeNative::USize(_) => "usize",
-            syntax::TypeNative::F32(_) => "f32",
-            syntax::TypeNative::F64(_) => "f64",
-        },
-        syntax::Type::Buffer(_)
-        | syntax::Type::String(_)
-        | syntax::Type::Option(_)
-        | syntax::Type::Struct(_) => "buffer",
+    match ty.kind {
+        syntax::TypeKind::Native(ty) => ty.symbol(),
+        _ => "buffer",
     }
 }
 

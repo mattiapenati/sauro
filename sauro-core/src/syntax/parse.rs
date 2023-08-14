@@ -1,8 +1,11 @@
 use proc_macro2::Span;
 use syn::{punctuated::Punctuated, spanned::Spanned, Pat, Token, Visibility};
 
+use crate::typescript;
+
 use super::{
     Field, FnArg, Item, ItemFn, ItemStruct, Module, ReturnType, Signature, Type, TypeKind,
+    TypeNative,
 };
 
 pub fn parse_module(input: syn::ItemMod) -> syn::Result<Module> {
@@ -264,19 +267,47 @@ fn parse_type_path(value: &syn::TypePath) -> syn::Result<Type> {
         let ty = Box::new(syn::Type::Path(value.clone()));
 
         let segment = &segments[0];
-        let kind = match segment.ident.to_string().as_str() {
+        let (kind, ts) = match segment.ident.to_string().as_str() {
             // native types
-            "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64" | "usize"
-            | "f32" | "f64" => TypeKind::Native,
-            "Box" => pointer_kind(segment)?,
-            "Option" => option_kind(segment)?,
-            "Result" => result_kind(segment)?,
-            "String" => TypeKind::StringOwned,
-            "Vec" => vector_kind(segment)?,
-            _ => TypeKind::Json,
+            "i8" => (TypeKind::Native(TypeNative::I8), typescript::number),
+            "i16" => (TypeKind::Native(TypeNative::I16), typescript::number),
+            "i32" => (TypeKind::Native(TypeNative::I32), typescript::number),
+            "i64" => (
+                TypeKind::Native(TypeNative::I64),
+                typescript::number | typescript::bigint,
+            ),
+            "isize" => (
+                TypeKind::Native(TypeNative::ISize),
+                typescript::number | typescript::bigint,
+            ),
+            "u8" => (TypeKind::Native(TypeNative::U8), typescript::number),
+            "u16" => (TypeKind::Native(TypeNative::I16), typescript::number),
+            "u32" => (TypeKind::Native(TypeNative::I32), typescript::number),
+            "u64" => (
+                TypeKind::Native(TypeNative::U64),
+                typescript::number | typescript::bigint,
+            ),
+            "usize" => (
+                TypeKind::Native(TypeNative::USize),
+                typescript::number | typescript::bigint,
+            ),
+            "f32" => (
+                TypeKind::Native(TypeNative::F32),
+                typescript::number | typescript::bigint,
+            ),
+            "f64" => (
+                TypeKind::Native(TypeNative::F64),
+                typescript::number | typescript::bigint,
+            ),
+            "Box" => parse_pointer_type(segment)?,
+            "Option" => parse_option_type(segment)?,
+            "Result" => parse_result_type(segment)?,
+            "String" => (TypeKind::StringOwned, typescript::string),
+            "Vec" => parse_vector_type(segment)?,
+            s => (TypeKind::Json, typescript::Type![s]),
         };
 
-        return Ok(Type { ty, kind });
+        return Ok(Type { ty, kind, ts });
     }
 
     // fully qualified types
@@ -288,26 +319,26 @@ fn parse_type_path(value: &syn::TypePath) -> syn::Result<Type> {
             && segments[1].ident == "box"
             && segment.ident == "Box"
         {
-            let kind = pointer_kind(segment)?;
-            return Ok(Type { ty, kind });
+            let (kind, ts) = parse_pointer_type(segment)?;
+            return Ok(Type { ty, kind, ts });
         } else if (segments[0].ident == "std" || segments[0].ident == "core")
             && segments[1].ident == "option"
             && segment.ident == "Option"
         {
-            let kind = option_kind(segment)?;
-            return Ok(Type { ty, kind });
+            let (kind, ts) = parse_option_type(segment)?;
+            return Ok(Type { ty, kind, ts });
         } else if (segments[0].ident == "std" || segments[0].ident == "core")
             && segments[1].ident == "result"
             && segment.ident == "Result"
         {
-            let kind = result_kind(segment)?;
-            return Ok(Type { ty, kind });
+            let (kind, ts) = parse_result_type(segment)?;
+            return Ok(Type { ty, kind, ts });
         } else if (segments[0].ident == "std" || segments[0].ident == "alloc")
             && segments[1].ident == "vec"
             && segment.ident == "Vec"
         {
-            let kind = vector_kind(segment)?;
-            return Ok(Type { ty, kind });
+            let (kind, ts) = parse_vector_type(segment)?;
+            return Ok(Type { ty, kind, ts });
         }
     }
 
@@ -329,7 +360,9 @@ fn parse_type_reference(input: &syn::TypeReference) -> syn::Result<Type> {
                 {
                     let ty = Box::new(syn::Type::Reference(input.clone()));
                     let kind = TypeKind::StringBorrowed;
-                    return Ok(Type { ty, kind });
+                    let ts = typescript::string;
+
+                    return Ok(Type { ty, kind, ts });
                 }
             }
         }
@@ -344,7 +377,9 @@ fn parse_type_reference(input: &syn::TypeReference) -> syn::Result<Type> {
                     } else {
                         TypeKind::BufferBorrowedMut
                     };
-                    return Ok(Type { ty, kind });
+                    let ts = typescript::Uint8Array;
+
+                    return Ok(Type { ty, kind, ts });
                 }
             }
         }
@@ -354,7 +389,7 @@ fn parse_type_reference(input: &syn::TypeReference) -> syn::Result<Type> {
     Err(syn::Error::new_spanned(input, "unsupported type"))
 }
 
-fn pointer_kind(value: &syn::PathSegment) -> syn::Result<TypeKind> {
+fn parse_pointer_type(value: &syn::PathSegment) -> syn::Result<(TypeKind, typescript::Type)> {
     assert!(value.ident == "Box");
 
     let arguments = &value.arguments;
@@ -366,7 +401,7 @@ fn pointer_kind(value: &syn::PathSegment) -> syn::Result<TypeKind> {
                 syn::GenericArgument::Type(syn::Type::Path(ty)) => {
                     let segments = &ty.path.segments;
                     if ty.qself.is_none() && segments.len() == 1 && segments[0].ident == "str" {
-                        return Ok(TypeKind::StringOwned);
+                        return Ok((TypeKind::StringOwned, typescript::string));
                     }
                 }
                 // Box<[u8]>
@@ -375,7 +410,7 @@ fn pointer_kind(value: &syn::PathSegment) -> syn::Result<TypeKind> {
                         let segments = &elem.path.segments;
                         if elem.qself.is_none() && segments.len() == 1 && segments[0].ident == "u8"
                         {
-                            return Ok(TypeKind::BufferOwned);
+                            return Ok((TypeKind::BufferOwned, typescript::Uint8Array));
                         }
                     }
                 }
@@ -386,7 +421,7 @@ fn pointer_kind(value: &syn::PathSegment) -> syn::Result<TypeKind> {
     Err(syn::Error::new_spanned(value, "unsupported type"))
 }
 
-fn option_kind(value: &syn::PathSegment) -> syn::Result<TypeKind> {
+fn parse_option_type(value: &syn::PathSegment) -> syn::Result<(TypeKind, typescript::Type)> {
     assert!(value.ident == "Option");
 
     let arguments = &value.arguments;
@@ -395,8 +430,8 @@ fn option_kind(value: &syn::PathSegment) -> syn::Result<TypeKind> {
         if args.len() == 1 {
             // Option<T> (where T is a valid type)
             if let syn::GenericArgument::Type(syn::Type::Path(ty)) = &args[0] {
-                if parse_type_path(ty).is_ok() {
-                    return Ok(TypeKind::Json);
+                if let Ok(elem) = parse_type_path(ty) {
+                    return Ok((TypeKind::Json, elem.ts | typescript::null));
                 }
             }
         }
@@ -404,7 +439,7 @@ fn option_kind(value: &syn::PathSegment) -> syn::Result<TypeKind> {
     Err(syn::Error::new_spanned(value, "unsupported type"))
 }
 
-fn result_kind(value: &syn::PathSegment) -> syn::Result<TypeKind> {
+fn parse_result_type(value: &syn::PathSegment) -> syn::Result<(TypeKind, typescript::Type)> {
     assert!(value.ident == "Result");
 
     let arguments = &value.arguments;
@@ -412,23 +447,23 @@ fn result_kind(value: &syn::PathSegment) -> syn::Result<TypeKind> {
         let args = &arguments.args;
         if args.len() == 2 {
             // Result<T, E> (where both T and E are a valid types)
-            let ok_is_valid_type = matches!(
-                &args[0],
-                syn::GenericArgument::Type(syn::Type::Path(ty)) if parse_type_path(ty).is_ok(),
-            );
-            let err_is_valid_type = matches!(
-                &args[0],
-                syn::GenericArgument::Type(syn::Type::Path(ty)) if parse_type_path(ty).is_ok(),
-            );
-            if ok_is_valid_type && err_is_valid_type {
-                return Ok(TypeKind::Json);
+            if let (
+                syn::GenericArgument::Type(syn::Type::Path(ok_ty)),
+                syn::GenericArgument::Type(syn::Type::Path(err_ty)),
+            ) = (&args[0], &args[1])
+            {
+                if let Ok(ok_ty) = parse_type_path(ok_ty) {
+                    if parse_type_path(err_ty).is_ok() {
+                        return Ok((TypeKind::Json, ok_ty.ts));
+                    }
+                }
             }
         }
     }
     Err(syn::Error::new_spanned(value, "unsupported type"))
 }
 
-fn vector_kind(value: &syn::PathSegment) -> syn::Result<TypeKind> {
+fn parse_vector_type(value: &syn::PathSegment) -> syn::Result<(TypeKind, typescript::Type)> {
     assert!(value.ident == "Vec");
 
     let arguments = &value.arguments;
@@ -439,11 +474,11 @@ fn vector_kind(value: &syn::PathSegment) -> syn::Result<TypeKind> {
                 let segments = &ty.path.segments;
                 // Vec<u8>
                 if ty.qself.is_none() && segments.len() == 1 && segments[0].ident == "u8" {
-                    return Ok(TypeKind::BufferOwned);
+                    return Ok((TypeKind::BufferOwned, typescript::Uint8Array));
                 }
                 // Vec<T> (where T is a valid type)
-                else if parse_type_path(ty).is_ok() {
-                    return Ok(TypeKind::Json);
+                else if let Ok(elem) = parse_type_path(ty) {
+                    return Ok((TypeKind::Json, elem.ts.array()));
                 }
             }
         }

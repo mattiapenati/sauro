@@ -164,7 +164,7 @@ impl<'a> ToTokens for BindingFnArg<'a> {
         let span = input.span();
         let colon_token = &input.colon_token;
 
-        let expand = if let TypeKind::Native = input.ty.kind {
+        let expand = if let TypeKind::Native(_) = input.ty.kind {
             let ty = &input.ty.ty;
             let ident = format_ident!("__arg{}", index);
             quote_spanned!(span => #ident #colon_token #ty)
@@ -196,7 +196,7 @@ impl<'a> ToTokens for BindingFnArgOverride<'a> {
         let ty = &input.ty.ty;
 
         let expand = match input.ty.kind {
-            TypeKind::Native => quote_spanned!(span => let #ident = #ident_arg;),
+            TypeKind::Native(_) => quote_spanned!(span => let #ident = #ident_arg;),
             TypeKind::BufferBorrowed => {
                 quote_spanned! {span =>
                     let #ident = unsafe {
@@ -278,7 +278,7 @@ impl<'a> ToTokens for BindingReturnType<'a> {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let input = self.0;
         if let ReturnType::Type(rarrow, ty) = input {
-            let expand = if let TypeKind::Native = ty.kind {
+            let expand = if let TypeKind::Native(_) = ty.kind {
                 quote!(#rarrow #ty)
             } else {
                 quote!(#rarrow *const u8 )
@@ -299,7 +299,7 @@ impl<'a> ToTokens for BindingReturnStmt<'a> {
         };
 
         let expand = match ty.kind {
-            TypeKind::Native => quote!(__inner_res),
+            TypeKind::Native(_) => quote!(__inner_res),
             TypeKind::BufferBorrowed | TypeKind::BufferBorrowedMut | TypeKind::BufferOwned => {
                 quote! {{
                     let x: #ty = __inner_res;

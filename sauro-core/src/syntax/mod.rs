@@ -2,6 +2,8 @@ mod parse;
 
 use syn::{punctuated::Punctuated, token, Attribute, Block, Ident, Token};
 
+use crate::typescript;
+
 pub use self::parse::parse_module;
 
 pub struct Module {
@@ -63,9 +65,9 @@ pub enum ReturnType {
 }
 
 pub struct Type {
-    /// Type of function arguments
     pub ty: Box<syn::Type>,
     pub kind: TypeKind,
+    pub ts: typescript::Type,
 }
 
 pub enum TypeKind {
@@ -73,7 +75,42 @@ pub enum TypeKind {
     BufferBorrowedMut,
     BufferOwned,
     Json,
-    Native,
+    Native(TypeNative),
     StringBorrowed,
     StringOwned,
+}
+
+#[derive(Clone, Copy)]
+pub enum TypeNative {
+    I8,
+    I16,
+    I32,
+    I64,
+    ISize,
+    U8,
+    U16,
+    U32,
+    U64,
+    USize,
+    F32,
+    F64,
+}
+
+impl TypeNative {
+    pub fn symbol(&self) -> &'static str {
+        match self {
+            TypeNative::I8 => "i8",
+            TypeNative::I16 => "i16",
+            TypeNative::I32 => "i32",
+            TypeNative::I64 => "i64",
+            TypeNative::ISize => "isize",
+            TypeNative::U8 => "u8",
+            TypeNative::U16 => "u16",
+            TypeNative::U32 => "u32",
+            TypeNative::U64 => "u64",
+            TypeNative::USize => "usize",
+            TypeNative::F32 => "f32",
+            TypeNative::F64 => "f64",
+        }
+    }
 }
