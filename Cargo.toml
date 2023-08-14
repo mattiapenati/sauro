@@ -1,7 +1,8 @@
 [workspace]
-members = ["examples", "sauro", "sauro-core", "sauro-macro"]
+members = ["examples", "sauro", "sauro-cli", "sauro-core", "sauro-macro"]
 
 [workspace.package]
+version = "0.1.0"
 authors = ["Mattia Penati <mattia.penati@protonmail.com>"]
 edition = "2021"
 license = "MIT OR Apache-2.0"

@@ -3,8 +3,9 @@ use std::{collections::HashMap, fs::File, io::BufReader};
 use anyhow::{anyhow, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use clap::Parser;
+use sauro_core::syntax;
 
-use crate::{expand, syntax};
+use crate::expand;
 
 /// Compile the project and create the binding source code
 #[derive(Parser)]

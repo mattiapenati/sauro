@@ -1,8 +1,8 @@
 [package]
 name = "sauro-macro"
-version = "0.1.0"
 description = "Macros implementation of sauro::bindgen"
 readme = "../README.md"
+version.workspace = true
 authors.workspace = true
 edition.workspace = true
 license.workspace = true

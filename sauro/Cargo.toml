@@ -1,8 +1,8 @@
 [package]
 name = "sauro"
-version = "0.1.0"
 description = "Rust bindings for Deno"
 readme = "../README.md"
+version.workspace = true
 authors.workspace = true
 edition.workspace = true
 license.workspace = true

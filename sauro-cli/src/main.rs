@@ -1,6 +1,5 @@
 mod cmd;
 mod expand;
-mod syntax;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};

@@ -1,4 +1,4 @@
-use super::syntax;
+use sauro_core::syntax;
 
 pub fn expand_module(
     module: &syntax::Module,
