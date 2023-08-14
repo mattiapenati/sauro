@@ -164,7 +164,7 @@ impl<'a> ToTokens for BindingFnArg<'a> {
         let span = input.span();
         let colon_token = &input.colon_token;
 
-        let expand = if input.ty.kind.is_native() {
+        let expand = if let TypeKind::Native = input.ty.kind {
             let ty = &input.ty.ty;
             let ident = format_ident!("__arg{}", index);
             quote_spanned!(span => #ident #colon_token #ty)
@@ -278,7 +278,7 @@ impl<'a> ToTokens for BindingReturnType<'a> {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let input = self.0;
         if let ReturnType::Type(rarrow, ty) = input {
-            let expand = if ty.kind.is_native() {
+            let expand = if let TypeKind::Native = ty.kind {
                 quote!(#rarrow #ty)
             } else {
                 quote!(#rarrow *const u8 )

@@ -1,5 +1,5 @@
 [workspace]
-members = ["examples", "sauro", "sauro-cli", "sauro-macro"]
+members = ["examples", "sauro", "sauro-core", "sauro-macro"]
 
 [workspace.package]
 authors = ["Mattia Penati <mattia.penati@protonmail.com>"]
@@ -9,6 +9,7 @@ license = "MIT OR Apache-2.0"
 [workspace.dependencies]
 proc-macro2 = "1"
 quote = "1"
+sauro-core = { version = "0.1.0", path = "sauro-core" }
 sauro-macro = { version = "0.1.0", path = "sauro-macro" }
 syn = { version = "2", features = ["full"] }
 

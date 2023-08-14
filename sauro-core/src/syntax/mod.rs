@@ -77,9 +77,3 @@ pub enum TypeKind {
     StringBorrowed,
     StringOwned,
 }
-
-impl TypeKind {
-    pub fn is_native(&self) -> bool {
-        matches!(self, Self::Native)
-    }
-}

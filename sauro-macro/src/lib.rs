@@ -1,8 +1,7 @@
-mod expand;
-mod syntax;
-
 use proc_macro::TokenStream;
 use syn::{parse_macro_input, ItemMod};
+
+use sauro_core::{expand, syntax};
 
 #[proc_macro_attribute]
 pub fn bindgen(_args: TokenStream, input: TokenStream) -> TokenStream {

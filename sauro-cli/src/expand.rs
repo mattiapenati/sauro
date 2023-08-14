@@ -144,11 +144,13 @@ fn expand_function(
 
     // transform input
     for (index, input) in sig.inputs.iter().enumerate() {
-        match &input.ty {
-            syntax::Type::Native(_) => {
+        match input.ty.kind {
+            syntax::TypeKind::Native => {
                 writeln!(out, "  const __arg{} = {};", index, input.ident)?;
             }
-            syntax::Type::Buffer(_) => {
+            syntax::TypeKind::BufferBorrowed
+            | syntax::TypeKind::BufferBorrowedMut
+            | syntax::TypeKind::BufferOwned => {
                 writeln!(out, "  const __arg{}_ptr = {};", index, input.ident)?;
                 writeln!(
                     out,
@@ -156,7 +158,7 @@ fn expand_function(
                     index
                 )?;
             }
-            syntax::Type::String(_) => {
+            syntax::TypeKind::StringBorrowed | syntax::TypeKind::StringOwned => {
                 writeln!(
                     out,
                     "  const __arg{}_ptr = __stringEncode({});",
@@ -169,7 +171,7 @@ fn expand_function(
                 )?;
                 utilities.string_encode = true;
             }
-            syntax::Type::Struct(_) | syntax::Type::Option(_) => {
+            syntax::TypeKind::Json => {
                 writeln!(
                     out,
                     "  const __arg{}_ptr = __structEncode({});",
@@ -195,8 +197,8 @@ fn expand_function(
         if index > 0 {
             write!(out, ", ")?;
         }
-        match &input.ty {
-            syntax::Type::Native(_) => write!(out, "__arg{}", index)?,
+        match input.ty.kind {
+            syntax::TypeKind::Native => write!(out, "__arg{}", index)?,
             _ => write!(out, "__arg{0}_ptr, __arg{0}_len", index)?,
         }
     }
@@ -204,11 +206,13 @@ fn expand_function(
 
     // transform result
     if let syntax::ReturnType::Type(_, ty) = &sig.output {
-        match &ty {
-            syntax::Type::Native(_) => {
+        match ty.kind {
+            syntax::TypeKind::Native => {
                 writeln!(out, "  return __res")?;
             }
-            syntax::Type::Buffer(_) => {
+            syntax::TypeKind::BufferBorrowed
+            | syntax::TypeKind::BufferBorrowedMut
+            | syntax::TypeKind::BufferOwned => {
                 if non_blocking {
                     writeln!(out, "  return __res.then(__lenPrefixedBuffer);")?;
                 } else {
@@ -216,7 +220,7 @@ fn expand_function(
                 }
                 utilities.len_prefixed_buffer = true;
             }
-            syntax::Type::String(_) => {
+            syntax::TypeKind::StringBorrowed | syntax::TypeKind::StringOwned => {
                 if non_blocking {
                     writeln!(
                         out,
@@ -228,7 +232,7 @@ fn expand_function(
                 utilities.string_decode = true;
                 utilities.len_prefixed_buffer = true;
             }
-            syntax::Type::Struct(_) | syntax::Type::Option(_) => {
+            syntax::TypeKind::Json => {
                 if non_blocking {
                     writeln!(
                         out,
