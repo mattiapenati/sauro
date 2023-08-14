@@ -86,7 +86,7 @@ impl NewCommand {
         let dependencies = data.get_mut("dependencies").unwrap();
         let dependencies = dependencies.as_table_mut().unwrap();
 
-        dependencies.insert("sauro", toml_edit::value("*"));
+        dependencies.insert("sauro", toml_edit::value(env!("CARGO_PKG_VERSION")));
 
         local_manifest.write()?;
 

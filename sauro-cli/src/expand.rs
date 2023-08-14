@@ -112,7 +112,6 @@ fn expand_function(
     func: &syntax::ItemFn,
 ) -> Result<Utilities, std::fmt::Error> {
     let sig = &func.sig;
-    let has_inputs = !sig.inputs.is_empty();
     let non_blocking = is_non_blocking_fn(func);
     let mut utilities = Utilities::default();
 
@@ -187,12 +186,12 @@ fn expand_function(
         }
     }
 
-    if has_inputs {
-        writeln!(out)?;
-    }
-
     // call imported function
-    write!(out, "  const __res = __symbols.{}(", sig.ident)?;
+    if non_blocking {
+        write!(out, "  const __inner_res = await __symbols.{}(", sig.ident)?;
+    } else {
+        write!(out, "  const __inner_res = __symbols.{}(", sig.ident)?;
+    }
     for (index, input) in sig.inputs.iter().enumerate() {
         if index > 0 {
             write!(out, ", ")?;
@@ -208,39 +207,29 @@ fn expand_function(
     if let syntax::ReturnType::Type(_, ty) = &sig.output {
         match ty.kind {
             syntax::TypeKind::Native(_) => {
-                writeln!(out, "  return __res")?;
+                writeln!(out, "  return __inner_res")?;
             }
             syntax::TypeKind::BufferBorrowed
             | syntax::TypeKind::BufferBorrowedMut
             | syntax::TypeKind::BufferOwned => {
-                if non_blocking {
-                    writeln!(out, "  return __res.then(__lenPrefixedBuffer);")?;
-                } else {
-                    writeln!(out, "  return __lenPrefixedBuffer(__res);")?;
-                }
+                writeln!(out, "  return __lenPrefixedBuffer(__inner_res);")?;
                 utilities.len_prefixed_buffer = true;
             }
             syntax::TypeKind::StringBorrowed | syntax::TypeKind::StringOwned => {
-                if non_blocking {
-                    writeln!(
-                        out,
-                        "  return __res.then(__lenPrefixedBuffer).then(__stringDecode);"
-                    )?;
-                } else {
-                    writeln!(out, "  return __stringDecode(__lenPrefixedBuffer(__res));")?;
-                }
+                writeln!(
+                    out,
+                    "  return __stringDecode(__lenPrefixedBuffer(__inner_res));"
+                )?;
                 utilities.string_decode = true;
                 utilities.len_prefixed_buffer = true;
             }
             syntax::TypeKind::Json => {
-                if non_blocking {
-                    writeln!(
-                        out,
-                        "  return __res.then(__lenPrefixedBuffer).then(__structDecode);"
-                    )?;
-                } else {
-                    writeln!(out, "  return __structDecode(__lenPrefixedBuffer(__res));")?;
-                }
+                let is_result = ty.is_result;
+                writeln!(
+                    out,
+                    "  return __structDecode(__lenPrefixedBuffer(__inner_res), {});",
+                    is_result
+                )?;
                 utilities.struct_decode = true;
                 utilities.len_prefixed_buffer = true;
             }
@@ -280,37 +269,46 @@ struct Utilities {
     len_prefixed_buffer: bool,
 }
 const STRING_ENCODE: &str = r#"function __stringEncode(s: string): Uint8Array {
-    return new TextEncoder().encode(s);
+  return new TextEncoder().encode(s);
 }
 "#;
 
 const STRING_DECODE: &str = r#"function __stringDecode(a: Uint8Array): string {
-    return new TextDecoder().decode(a)
+  return new TextDecoder().decode(a)
 }
 "#;
 
-const STRUCT_ENCODE: &str = r#"function __structEncode(v: any): Uint8Array {
-    return __stringEncode(JSON.stringify(v));
+const STRUCT_ENCODE: &str = r#"function __structEncode(v): Uint8Array {
+  return __stringEncode(JSON.stringify(v));
 }
 "#;
 
-const STRUCT_DECODE: &str = r#"function __structDecode(v: Uint8Array): any {
+const STRUCT_DECODE: &str = r#"function __structDecode(v: Uint8Array, isResult = false) {
+  if (isResult) {
+    const obj: { Ok?: unknown, Err?: unknown } = JSON.parse(__stringDecode(v));
+    if (obj.Err !== undefined) {
+      throw obj.Err;
+    } else {
+      return obj.Ok;
+    }
+  } else {
     return JSON.parse(__stringDecode(v));
+  }
 }
 "#;
 
-const LEN_PREFIXED_BUFFER: &str = r#"function __lenPrefixedBuffer(v: any): Uint8Array {
-    const unsafeView = new Deno.UnsafePointerView(v);
+const LEN_PREFIXED_BUFFER: &str = r#"function __lenPrefixedBuffer(v): Uint8Array {
+  const unsafeView = new Deno.UnsafePointerView(v);
 
-    const lenBigEndian = new Uint8Array(4);
-    const lenBigEndianView = new DataView(lenBigEndian.buffer);
-    unsafeView.copyInto(lenBigEndian, 0);
-    const len = lenBigEndianView.getInt32(0);
+  const lenBigEndian = new Uint8Array(4);
+  const lenBigEndianView = new DataView(lenBigEndian.buffer);
+  unsafeView.copyInto(lenBigEndian, 0);
+  const len = lenBigEndianView.getInt32(0);
 
-    const buffer = new Uint8Array(len);
-    unsafeView.copyInto(buffer, 4);
+  const buffer = new Uint8Array(len);
+  unsafeView.copyInto(buffer, 4);
 
-    return buffer;
+  return buffer;
 }
 "#;
 

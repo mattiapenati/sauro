@@ -68,6 +68,7 @@ pub struct Type {
     pub ty: Box<syn::Type>,
     pub kind: TypeKind,
     pub ts: typescript::Type,
+    pub is_result: bool,
 }
 
 pub enum TypeKind {

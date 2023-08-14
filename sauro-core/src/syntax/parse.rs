@@ -267,6 +267,7 @@ fn parse_type_path(value: &syn::TypePath) -> syn::Result<Type> {
         let ty = Box::new(syn::Type::Path(value.clone()));
 
         let segment = &segments[0];
+        let is_result = segment.ident == "Result";
         let (kind, ts) = match segment.ident.to_string().as_str() {
             // native types
             "i8" => (TypeKind::Native(TypeNative::I8), typescript::number),
@@ -291,14 +292,8 @@ fn parse_type_path(value: &syn::TypePath) -> syn::Result<Type> {
                 TypeKind::Native(TypeNative::USize),
                 typescript::number | typescript::bigint,
             ),
-            "f32" => (
-                TypeKind::Native(TypeNative::F32),
-                typescript::number | typescript::bigint,
-            ),
-            "f64" => (
-                TypeKind::Native(TypeNative::F64),
-                typescript::number | typescript::bigint,
-            ),
+            "f32" => (TypeKind::Native(TypeNative::F32), typescript::number),
+            "f64" => (TypeKind::Native(TypeNative::F64), typescript::number),
             "Box" => parse_pointer_type(segment)?,
             "Option" => parse_option_type(segment)?,
             "Result" => parse_result_type(segment)?,
@@ -307,7 +302,12 @@ fn parse_type_path(value: &syn::TypePath) -> syn::Result<Type> {
             s => (TypeKind::Json, typescript::Type![s]),
         };
 
-        return Ok(Type { ty, kind, ts });
+        return Ok(Type {
+            ty,
+            kind,
+            ts,
+            is_result,
+        });
     }
 
     // fully qualified types
@@ -315,31 +315,37 @@ fn parse_type_path(value: &syn::TypePath) -> syn::Result<Type> {
         let ty = Box::new(syn::Type::Path(value.clone()));
 
         let segment = &segments[2];
-        if (segments[0].ident == "std" || segments[0].ident == "alloc")
+        let is_result = segment.ident == "Result";
+        let (kind, ts) = if (segments[0].ident == "std" || segments[0].ident == "alloc")
             && segments[1].ident == "box"
             && segment.ident == "Box"
         {
-            let (kind, ts) = parse_pointer_type(segment)?;
-            return Ok(Type { ty, kind, ts });
+            parse_pointer_type(segment)?
         } else if (segments[0].ident == "std" || segments[0].ident == "core")
             && segments[1].ident == "option"
             && segment.ident == "Option"
         {
-            let (kind, ts) = parse_option_type(segment)?;
-            return Ok(Type { ty, kind, ts });
+            parse_option_type(segment)?
         } else if (segments[0].ident == "std" || segments[0].ident == "core")
             && segments[1].ident == "result"
             && segment.ident == "Result"
         {
-            let (kind, ts) = parse_result_type(segment)?;
-            return Ok(Type { ty, kind, ts });
+            parse_result_type(segment)?
         } else if (segments[0].ident == "std" || segments[0].ident == "alloc")
             && segments[1].ident == "vec"
             && segment.ident == "Vec"
         {
-            let (kind, ts) = parse_vector_type(segment)?;
-            return Ok(Type { ty, kind, ts });
-        }
+            parse_vector_type(segment)?
+        } else {
+            return Err(syn::Error::new_spanned(value, "unsupported type"));
+        };
+
+        return Ok(Type {
+            ty,
+            kind,
+            ts,
+            is_result,
+        });
     }
 
     Err(syn::Error::new_spanned(value, "unsupported type"))
@@ -347,6 +353,7 @@ fn parse_type_path(value: &syn::TypePath) -> syn::Result<Type> {
 
 fn parse_type_reference(input: &syn::TypeReference) -> syn::Result<Type> {
     let elem = &*input.elem;
+    let is_result = false;
     match elem {
         syn::Type::Path(ty) => {
             let path = &ty.path;
@@ -362,7 +369,12 @@ fn parse_type_reference(input: &syn::TypeReference) -> syn::Result<Type> {
                     let kind = TypeKind::StringBorrowed;
                     let ts = typescript::string;
 
-                    return Ok(Type { ty, kind, ts });
+                    return Ok(Type {
+                        ty,
+                        kind,
+                        ts,
+                        is_result,
+                    });
                 }
             }
         }
@@ -379,7 +391,12 @@ fn parse_type_reference(input: &syn::TypeReference) -> syn::Result<Type> {
                     };
                     let ts = typescript::Uint8Array;
 
-                    return Ok(Type { ty, kind, ts });
+                    return Ok(Type {
+                        ty,
+                        kind,
+                        ts,
+                        is_result,
+                    });
                 }
             }
         }
